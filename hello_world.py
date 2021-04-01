@@ -12,7 +12,6 @@ def get_motor_joint_states(robot):
     joint_infos = [p.getJointInfo(robot, i) for i in range(p.getNumJoints(robot))]
     joint_states = [j for j, i in zip(joint_states, joint_infos) if i[3] > -1]
     joint_names = [info[1] for info in joint_infos if info[3] > -1]
-    print(joint_names, len(joint_names))
     joint_positions = [state[0] for state in joint_states]
     joint_velocities = [state[1] for state in joint_states]
     joint_torques = [state[3] for state in joint_states]
@@ -30,11 +29,15 @@ def get_joint_states(robot):
 def draw_cross(pos, length=0.05, width=5, color=[1.0, 0, 0]):
     p.addUserDebugLine(np.asarray(np.array(pos) - np.array([length, 0, 0])),
                        np.asarray(np.array(pos) + np.array([length, 0, 0])),
-                       lineColorRGB=color,
+                       lineColorRGB=[1.0, 0, 0],
                        lineWidth=width)
     p.addUserDebugLine(np.asarray(np.array(pos) - np.array([0, length, 0])),
                        np.asarray(np.array(pos) + np.array([0, length, 0])),
-                       lineColorRGB=color,
+                       lineColorRGB=[0, 1.0, 0],
+                       lineWidth=width)
+    p.addUserDebugLine(np.asarray(np.array(pos) - np.array([0, 0, length])),
+                       np.asarray(np.array(pos) + np.array([0, 0, length])),
+                       lineColorRGB=[0, 0, 1.0],
                        lineWidth=width)
 
 
@@ -50,6 +53,26 @@ def get_pos(robot, link):
                             computeForwardKinematics=1)
     link_trn, link_rot, com_trn, com_rot, frame_pos, frame_rot, link_vt, link_vr = result
     return link_trn
+
+
+def get_pose(robot, link):
+    """
+    :param robot: body unique id of robot
+    :param link: linkID
+    :return: Cartesian position of center of mass of link
+             Cartesian rotation of center of mass of link in the form of se(3)
+             i.e. angle-axis representation, axis vector scaled by angle
+    """
+    result = p.getLinkState(robot,
+                            link,
+                            computeLinkVelocity=1,
+                            computeForwardKinematics=1)
+    link_trn, link_rot, com_trn, com_rot, frame_pos, frame_rot, link_vt, link_vr = result
+    '''
+    axis_angle = p.getAxisAngleFromQuaternion(link_rot)
+    print(axis_angle)
+    '''
+    return link_trn, link_rot
 
 
 # return the
@@ -90,6 +113,9 @@ def get_arm_jacobian(robot, arm, tool, loc_pos=[0.0] * 3):
     else:
         print('''arm incorrect, input "left" or "right" ''')
 
+def quat2se3(quat):
+    axis, angle = p.getAxisAngleFromQuaternion(quat)
+    return np.array(axis) * angle
 
 class vs():
     def __init__(self):
@@ -129,11 +155,12 @@ class vs():
                               arm,
                               twist,
                               duration,
-                              r=200,
+                              r=100,
                               v_threshold=0.15,
                               omega_threshold=0.6,
                               joint_vel_threshold=1.5,
-                              cond_threshold=100000):
+                              cond_threshold=100000,
+                              show_cond = False):
         """
         Cartesian end-effector controller
         requires:
@@ -169,7 +196,6 @@ class vs():
         for i in range(int(r * duration)):
             # calculate joint_vels
             J = get_arm_jacobian(self.robot, arm, tool, loc_pos=[0.0] * 3)  # get current jacobian
-            print("jacobian dim {}".format(J.shape))
             # calculate desired joint velocity (by multiplying jacobian pseudo-inverse), redundant -> min energy path
             joint_vels = list(np.linalg.pinv(np.array(J)).dot(np.array(twist)).reshape(-1))
 
@@ -183,8 +209,9 @@ class vs():
             cond = np.linalg.cond(J.dot(J.T))
             cond2 = np.linalg.cond(J[:3, :].dot(J[:3, :].T))
             # print(J.dot(J.T))
-            print("Conditional number of JJ' {:.2f}".format(cond))
-            print("Conditional number of JJ' cart {:.2f}".format(cond2))
+            if show_cond:
+                print("Conditional number of JJ' {:.2f}".format(cond))
+                print("Conditional number of JJ' cart {:.2f}".format(cond2))
             if cond > cond_threshold:
                 print("Large conditional number! {:.2f}".format(cond))
                 break
@@ -194,21 +221,63 @@ class vs():
             p.stepSimulation()
             time.sleep(1. / r)
 
-val = vs()
-pos = get_pos(val.robot, val.left_tool)
-draw_cross(pos)
+    def pbvs(self,
+             arm,
+             goal_pos,
+             goal_rot,
+             kv = 0.5,
+             kw = 0.3,
+             eps_pos=0.005,
+             eps_rot=0.1,
+             vs_rate = 10,
+             joint_vel_threshold=1.5,
+             cond_threshold=10000):
+        if arm == "right":
+            tool = self.right_tool
+            arm_joint_indices = self.right_arm_joint_indices
+        elif arm == "left":
+            tool = self.left_tool
+            arm_joint_indices = self.left_arm_joint_indices
+        else:
+            print('''arm incorrect, input "left" or "right" ''')
+            return
 
+        while True:
+            cur_pos, cur_rot = get_pose(self.robot, tool)
+            cur_pos_inv, cur_rot_inv = p.invertTransform(cur_pos, cur_rot)
+            pos_cg, rot_cg = p.multiplyTransforms(cur_pos_inv, cur_rot_inv, goal_pos, goal_rot)
+            err_pos = np.linalg.norm(pos_cg)
+            err_rot = np.linalg.norm(p.getAxisAngleFromQuaternion(rot_cg)[1])
+            if err_pos < eps_pos and err_rot < eps_rot:
+                break
+            else:
+                print("Error to goal, position: {:2f}, orientation: {:2f}".format(err_pos, err_rot))
+            Rsc = np.array(p.getMatrixFromQuaternion(cur_rot)).reshape(3,3)
+
+            twist_local = np.hstack((np.array(pos_cg)*kv, np.array(quat2se3(rot_cg))*kw)).reshape(6,1)
+            local2global = np.block([[Rsc,              np.zeros((3,3))],
+                                     [np.zeros((3,3)),  Rsc            ]])
+            twist_global =local2global.dot(twist_local)
+            self.cartesian_vel_control(arm, np.asarray(twist_global), 1/vs_rate, show_cond = False)
+        print("PBVS goal achieved!")
+
+val = vs()
+
+# high cond number
+# init_pos = [[0.2]] * len(val.left_arm_joint_indices)
 init_pos = [[0.2]] * len(val.left_arm_joint_indices)
 p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos)
 time.sleep(0.5)
 
-pos = get_pos(val.robot, val.left_tool)
-draw_cross(pos)
 # p.addUserDebugLine([0.5,0.5,0.5], [0.62,0.52,0.52], lineColorRGB = [1.0, 0, 0], lifeTime = 4)
 jac_trn, jac_rot = get_jacobian(val.robot, val.left_tool)
 jac = get_arm_jacobian(val.robot, "left", val.left_tool)
 
-t = 1.0
+pos, rot = get_pose(val.robot, val.left_tool)
+print("axis angle result: {}".format(rot))
+
+'''
+t = 1.5
 val.cartesian_vel_control('left', [-0.05, 0, 0, 0, 0, 0], t)
 time.sleep(1)
 val.cartesian_vel_control('left', [0.05, 0, 0, 0, 0, 0], t)
@@ -221,7 +290,23 @@ val.cartesian_vel_control('left', [0, 0, 0.05, 0, 0, 0], t)
 time.sleep(1)
 val.cartesian_vel_control('left', [0, 0, -0.05, 0, 0, 0], t)
 time.sleep(2)
-
+'''
+'''
+t2 = 1.5
+w = 0.25
+val.cartesian_vel_control('left', [0, 0, 0, w, 0, 0], t2)
+time.sleep(1)
+val.cartesian_vel_control('left', [0, 0, 0, -w, 0, 0], t2)
+time.sleep(1)
+val.cartesian_vel_control('left', [0, 0, 0, 0, w, 0], t2)
+time.sleep(1)
+val.cartesian_vel_control('left', [0, 0, 0, 0, -w, 0], t2)
+time.sleep(1)
+val.cartesian_vel_control('left', [0, 0, 0, 0, 0, w], t2)
+time.sleep(1)
+val.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t2)
+time.sleep(2)
+'''
 '''
 for i in range(1000):
     cart_vel =
@@ -232,7 +317,11 @@ for i in range(1000):
     # print(p.getJointStates(val, left_arm_joint_indices))
     time.sleep(1. / 240.)
 '''
-
-
+cur_pos, cur_rot = get_pose(val.robot, val.left_tool)
+goal_pos = tuple(np.asarray(np.array(cur_pos) + np.array([0.1, -0.1, -0.1])))
+goal_rot = (0, 0, 0, 1)
+draw_cross(cur_pos)
+draw_cross(goal_pos)
+val.pbvs("left", goal_pos, cur_rot)
 time.sleep(100)
 p.disconnect()
