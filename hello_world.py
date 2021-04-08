@@ -2,7 +2,7 @@ import pybullet as p
 import time
 import pybullet_data
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 # this mp4 recording requires ffmpeg installed
 # mp4log = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,"humanoid.mp4")
@@ -59,6 +59,7 @@ def draw_pose(trans, rot, uids=None, relength=0.05, width=5, axis_len=0.1):
                                                  lineColorRGB=np.asarray(colors[:, i]),
                                                  lineWidth=width,
                                                  replaceItemUniqueId=uids[i]))
+
 
 def erase_pos(line_ids):
     for line_id in line_ids:
@@ -293,7 +294,35 @@ class vs():
             self.cartesian_vel_control(arm, np.asarray(twist_global), 1 / vs_rate, show_cond=False)
         print("PBVS goal achieved!")
 
+def get_true_depth(depth_img, zNear, zFar):
+    z_n = 2.0 * depth_img - 1.0
+    return 2.0 * zNear * zFar / (zFar + zNear - z_n * (zFar - zNear))
 
+def camera_test():
+    projectionMatrix = p.computeProjectionMatrixFOV(
+        fov=45.0,
+        aspect=1.0,
+        nearVal=0.1,
+        farVal=3.1)
+    viewMatrix = p.computeViewMatrix(
+        cameraEyePosition=[0, 0, 3],
+        cameraTargetPosition=[0, 0, 0],
+        cameraUpVector=[1, 1, 0])
+    width, height, rgbImg, depthImg, segImg = p.getCameraImage(
+        width=224,
+        height=224,
+        viewMatrix=viewMatrix,
+        projectionMatrix=projectionMatrix)
+    rgb_img = np.array(rgbImg)[:, :, :3]
+    depth_img = np.array(depthImg)
+    plt.imshow(rgb_img)
+    plt.show()
+    plt.figure()
+    plt.imshow(depth_img)
+    plt.show()
+    plt.imshow(get_true_depth(depth_img, 0.1, 3.1))
+    plt.show()
+    
 val = vs()
 
 # high cond number
@@ -359,8 +388,8 @@ goal_pos_id = draw_pose(goal_pos, goal_rot)
 # erase_pos(cur_pos_id)
 # draw_cross(cur_pos)
 # draw_cross(goal_pos)
+camera_test()
 
-
-val.pbvs("left", goal_pos, goal_rot, plot_pose=True)
+# val.pbvs("left", goal_pos, goal_rot, plot_pose=True)
 time.sleep(100)
 p.disconnect()
