@@ -2,7 +2,10 @@ import pybullet as p
 import time
 import pybullet_data
 import numpy as np
+import sophus as sp
+from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
+
 
 # this mp4 recording requires ffmpeg installed
 # mp4log = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,"humanoid.mp4")
@@ -101,7 +104,7 @@ def get_pose(robot, link):
 
 
 # return the
-def get_jacobian(robot, tool, loc_pos=[0.0] * 3):
+def get_jacobian(robot, tool, loc_pos=[0.0] * 3, perturb=False, mu=0.1, sigma=0.1):
     """
     returns two 3 by 20 full jacobian, translational, and rotational velocity respectively
     for val, 20 actuated joints are ordered as follows:
@@ -117,11 +120,17 @@ def get_jacobian(robot, tool, loc_pos=[0.0] * 3):
     """
     pos, vel, torq = get_motor_joint_states(robot)
     zero_vec = [0.0] * len(pos)
+
+    if perturb:
+        err = np.random.normal(mu, sigma, len(pos))
+        jac_t, jac_r = p.calculateJacobian(robot, tool, loc_pos, list(pos + err), zero_vec, zero_vec)
+        return np.array(jac_t), np.array(jac_r)
+
     jac_t, jac_r = p.calculateJacobian(robot, tool, loc_pos, pos, zero_vec, zero_vec)
     return np.array(jac_t), np.array(jac_r)
 
 
-def get_arm_jacobian(robot, arm, tool, loc_pos=[0.0] * 3):
+def get_arm_jacobian(robot, arm, tool, loc_pos=[0.0] * 3, perturb=False):
     """
     return 6 by 7 jacobian of the 7 dof left or right arm
     robot: body unique id of robot
@@ -130,7 +139,7 @@ def get_arm_jacobian(robot, arm, tool, loc_pos=[0.0] * 3):
     loc_pos: the point on the specified link to compute the jacobian for, in
             link local coordinates around its center of mass.
     """
-    jac_t, jac_r = get_jacobian(robot, tool, loc_pos)
+    jac_t, jac_r = get_jacobian(robot, tool, loc_pos, perturb=perturb)
     if arm == "left":
         return np.vstack((jac_t[:, 2:9], jac_r[:, 2:9]))
     elif arm == "right":
@@ -189,7 +198,8 @@ class vs():
                               omega_threshold=0.6,
                               joint_vel_threshold=1.5,
                               cond_threshold=100000,
-                              show_cond=False):
+                              show_cond=False,
+                              perturb_jacobian=False):
         """
         Cartesian end-effector controller
         requires:
@@ -224,7 +234,8 @@ class vs():
         # control loop
         for i in range(int(r * duration)):
             # calculate joint_vels
-            J = get_arm_jacobian(self.robot, arm, tool, loc_pos=[0.0] * 3)  # get current jacobian
+            J = get_arm_jacobian(self.robot, arm, tool, loc_pos=[0.0] * 3,
+                                 perturb=perturb_jacobian)  # get current jacobian
             # calculate desired joint velocity (by multiplying jacobian pseudo-inverse), redundant -> min energy path
             joint_vels = list(np.linalg.pinv(np.array(J)).dot(np.array(twist)).reshape(-1))
 
@@ -255,13 +266,19 @@ class vs():
              goal_pos,
              goal_rot,
              kv=0.9,
-             kw=0.3,
+             kw=0.5,
              eps_pos=0.005,
-             eps_rot=0.1,
+             eps_rot=0.05,
              vs_rate=20,
              joint_vel_threshold=1.5,
              cond_threshold=10000,
-             plot_pose=False):
+             plot_pose=False,
+             camera_update=False,
+             perturb_jacobian=False,
+             perturb_orientation=False,
+             mu_R=0.4,
+             sigma_R=0.4):
+
         if arm == "right":
             tool = self.right_tool
             arm_joint_indices = self.right_arm_joint_indices
@@ -274,11 +291,15 @@ class vs():
         cur_pos, cur_rot = get_pose(self.robot, tool)
         pos_plot_id = draw_pose(cur_pos, cur_rot)
         while True:
+            if camera_update:
+                camera_test()
             cur_pos, cur_rot = get_pose(self.robot, tool)
             if plot_pose:
                 draw_pose(cur_pos, cur_rot, uids=pos_plot_id)
             cur_pos_inv, cur_rot_inv = p.invertTransform(cur_pos, cur_rot)
+            # Pose of goal in camera frame
             pos_cg, rot_cg = p.multiplyTransforms(cur_pos_inv, cur_rot_inv, goal_pos, goal_rot)
+            # Evaluate current translational and rotational error
             err_pos = np.linalg.norm(pos_cg)
             err_rot = np.linalg.norm(p.getAxisAngleFromQuaternion(rot_cg)[1])
             if err_pos < eps_pos and err_rot < eps_rot:
@@ -287,16 +308,24 @@ class vs():
                 print("Error to goal, position: {:2f}, orientation: {:2f}".format(err_pos, err_rot))
             Rsc = np.array(p.getMatrixFromQuaternion(cur_rot)).reshape(3, 3)
 
+            # Perturb Rsc in SO(3) by a random variable in tangent space so(3)
+            if perturb_orientation:
+                dR = sp.SO3.exp(np.random.normal(mu_R, sigma_R, 3))
+                Rsc = Rsc.dot(dR.matrix())
             twist_local = np.hstack((np.array(pos_cg) * kv, np.array(quat2se3(rot_cg)) * kw)).reshape(6, 1)
             local2global = np.block([[Rsc, np.zeros((3, 3))],
                                      [np.zeros((3, 3)), Rsc]])
             twist_global = local2global.dot(twist_local)
-            self.cartesian_vel_control(arm, np.asarray(twist_global), 1 / vs_rate, show_cond=False)
+            self.cartesian_vel_control(arm, np.asarray(twist_global), 1 / vs_rate,
+                                       show_cond=False,
+                                       perturb_jacobian=perturb_jacobian)
         print("PBVS goal achieved!")
+
 
 def get_true_depth(depth_img, zNear, zFar):
     z_n = 2.0 * depth_img - 1.0
     return 2.0 * zNear * zFar / (zFar + zNear - z_n * (zFar - zNear))
+
 
 def camera_test():
     projectionMatrix = p.computeProjectionMatrixFOV(
@@ -315,6 +344,7 @@ def camera_test():
         projectionMatrix=projectionMatrix)
     rgb_img = np.array(rgbImg)[:, :, :3]
     depth_img = np.array(depthImg)
+    '''
     plt.imshow(rgb_img)
     plt.show()
     plt.figure()
@@ -322,74 +352,76 @@ def camera_test():
     plt.show()
     plt.imshow(get_true_depth(depth_img, 0.1, 3.1))
     plt.show()
-    
-val = vs()
+    '''
 
-# high cond number
-# init_pos = [[0.2]] * len(val.left_arm_joint_indices)
-init_pos = [[0.2]] * len(val.left_arm_joint_indices)
-p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos)
-time.sleep(0.5)
 
-# p.addUserDebugLine([0.5,0.5,0.5], [0.62,0.52,0.52], lineColorRGB = [1.0, 0, 0], lifeTime = 4)
-jac_trn, jac_rot = get_jacobian(val.robot, val.left_tool)
-jac = get_arm_jacobian(val.robot, "left", val.left_tool)
+def cart_vel_linear_test(val, t=1.5, v=0.05):
+    val.cartesian_vel_control('left', [-v, 0, 0, 0, 0, 0], t)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [v, 0, 0, 0, 0, 0], t)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, v, 0, 0, 0, 0], t)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, -v, 0, 0, 0, 0], t)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, v, 0, 0, 0], t)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, -v, 0, 0, 0], t)
+    time.sleep(2)
 
-pos, rot = get_pose(val.robot, val.left_tool)
-print("axis angle result: {}".format(rot))
 
-'''
-t = 1.5
-val.cartesian_vel_control('left', [-0.05, 0, 0, 0, 0, 0], t)
-time.sleep(1)
-val.cartesian_vel_control('left', [0.05, 0, 0, 0, 0, 0], t)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0.05, 0, 0, 0, 0], t)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, -0.05, 0, 0, 0, 0], t)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, 0.05, 0, 0, 0], t)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, -0.05, 0, 0, 0], t)
-time.sleep(2)
-'''
-'''
-t2 = 1.5
-w = 0.25
-val.cartesian_vel_control('left', [0, 0, 0, w, 0, 0], t2)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, 0, -w, 0, 0], t2)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, 0, 0, w, 0], t2)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, 0, 0, -w, 0], t2)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, 0, 0, 0, w], t2)
-time.sleep(1)
-val.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t2)
-time.sleep(2)
-'''
-'''
-for i in range(1000):
-    cart_vel =
-    targetVelocities = [0.05] * len(left_arm_joint_indices)
-    p.setJointMotorControlArray(val, left_arm_joint_indices, controlMode=p.VELOCITY_CONTROL,
-                                targetVelocities=targetVelocities)
-    p.stepSimulation()
-    # print(p.getJointStates(val, left_arm_joint_indices))
-    time.sleep(1. / 240.)
-'''
+def cart_vel_angular_test(val, t2=1.5, w=0.25):
+    val.cartesian_vel_control('left', [0, 0, 0, w, 0, 0], t2)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, 0, -w, 0, 0], t2)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, 0, 0, w, 0], t2)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, 0, 0, -w, 0], t2)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, 0, 0, 0, w], t2)
+    time.sleep(1)
+    val.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t2)
+    time.sleep(2)
 
-cur_pos, cur_rot = get_pose(val.robot, val.left_tool)
-goal_pos = tuple(np.asarray(np.array(cur_pos) + np.array([0.05, -0.05, 0.07])))
-goal_rot = p.getQuaternionSlerp(cur_rot, (0, 0, 0, 1), 0.3)
-cur_pos_id = draw_pose(cur_pos, cur_rot)
-goal_pos_id = draw_pose(goal_pos, goal_rot)
-# erase_pos(cur_pos_id)
-# draw_cross(cur_pos)
-# draw_cross(goal_pos)
-camera_test()
 
-# val.pbvs("left", goal_pos, goal_rot, plot_pose=True)
-time.sleep(100)
-p.disconnect()
+def main():
+    val = vs()
+
+    # Set val initial pose
+    # high cond number
+    # init_pos = [[0.2]] * len(val.left_arm_joint_indices)
+    init_pos = [[0.2]] * len(val.left_arm_joint_indices)
+    p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos)
+    time.sleep(0.5)
+
+    # Optional cartesian velocity controller test
+    cart_vel_linear_test(val)
+    cart_vel_angular_test(val)
+
+    # Get Jacobian testing script
+    jac_trn, jac_rot = get_jacobian(val.robot, val.left_tool)
+    jac = get_arm_jacobian(val.robot, "left", val.left_tool)
+
+    # Get pose testing script
+    pos, rot = get_pose(val.robot, val.left_tool)
+    print("axis angle result: {}".format(rot))
+
+    # Define and draw goal pose
+    cur_pos, cur_rot = get_pose(val.robot, val.left_tool)
+    goal_pos = tuple(np.asarray(np.array(cur_pos) + np.array([0.05, -0.05, 0.07])))
+    goal_rot = p.getQuaternionSlerp(cur_rot, (0, 0, 0, 1), 0.3)
+    draw_pose(cur_pos, cur_rot)
+    draw_pose(goal_pos, goal_rot)
+
+    # camera test
+    camera_test()
+
+    val.pbvs("left", goal_pos, goal_rot, plot_pose=True, perturb_jacobian=True, perturb_orientation=False)
+    time.sleep(100)
+    p.disconnect()
+
+
+if __name__ == "__main__":
+    # execute only if run as a script
+    main()
