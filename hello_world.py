@@ -41,20 +41,29 @@ def draw_cross(pos, length=0.05, width=5):
                        lineWidth=width)
 
 
-def draw_pose(trans, rot, length=0.05, width=5, axis_len=0.1):
+def draw_pose(trans, rot, uids=None, relength=0.05, width=5, axis_len=0.1):
     unique_ids = []
     coords = np.array(p.getMatrixFromQuaternion(rot)).reshape(3, 3) * axis_len + np.array(trans).reshape(3, 1)
     colors = np.eye(3)
-    for i in range(3):
-        unique_ids.append(p.addUserDebugLine(trans,
-                                             np.asarray(coords[:, i]),
-                                             lineColorRGB=np.asarray(colors[:, i]),
-                                             lineWidth=width))
-    return unique_ids
+    if uids is None:
+        for i in range(3):
+            unique_ids.append(p.addUserDebugLine(trans,
+                                                 np.asarray(coords[:, i]),
+                                                 lineColorRGB=np.asarray(colors[:, i]),
+                                                 lineWidth=width))
+        return unique_ids
+    else:
+        for i in range(3):
+            unique_ids.append(p.addUserDebugLine(trans,
+                                                 np.asarray(coords[:, i]),
+                                                 lineColorRGB=np.asarray(colors[:, i]),
+                                                 lineWidth=width,
+                                                 replaceItemUniqueId=uids[i]))
 
 def erase_pos(line_ids):
     for line_id in line_ids:
         p.removeUserDebugItem(line_id)
+
 
 def get_pos(robot, link):
     """
@@ -251,7 +260,7 @@ class vs():
              vs_rate=20,
              joint_vel_threshold=1.5,
              cond_threshold=10000,
-             plot_pose = False):
+             plot_pose=False):
         if arm == "right":
             tool = self.right_tool
             arm_joint_indices = self.right_arm_joint_indices
@@ -261,11 +270,12 @@ class vs():
         else:
             print('''arm incorrect, input "left" or "right" ''')
             return
-
+        cur_pos, cur_rot = get_pose(self.robot, tool)
+        pos_plot_id = draw_pose(cur_pos, cur_rot)
         while True:
             cur_pos, cur_rot = get_pose(self.robot, tool)
             if plot_pose:
-                cur_pos_plot_id = draw_pose(cur_pos, cur_rot)
+                draw_pose(cur_pos, cur_rot, uids=pos_plot_id)
             cur_pos_inv, cur_rot_inv = p.invertTransform(cur_pos, cur_rot)
             pos_cg, rot_cg = p.multiplyTransforms(cur_pos_inv, cur_rot_inv, goal_pos, goal_rot)
             err_pos = np.linalg.norm(pos_cg)
@@ -281,8 +291,6 @@ class vs():
                                      [np.zeros((3, 3)), Rsc]])
             twist_global = local2global.dot(twist_local)
             self.cartesian_vel_control(arm, np.asarray(twist_global), 1 / vs_rate, show_cond=False)
-            if plot_pose:
-                erase_pos(cur_pos_plot_id)
         print("PBVS goal achieved!")
 
 
@@ -351,6 +359,8 @@ goal_pos_id = draw_pose(goal_pos, goal_rot)
 # erase_pos(cur_pos_id)
 # draw_cross(cur_pos)
 # draw_cross(goal_pos)
-val.pbvs("left", goal_pos, goal_rot, plot_pose=False)
+
+
+val.pbvs("left", goal_pos, goal_rot, plot_pose=True)
 time.sleep(100)
 p.disconnect()
