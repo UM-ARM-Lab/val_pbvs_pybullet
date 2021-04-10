@@ -16,22 +16,9 @@ def main():
     init_pos2 = []
     for joint in val.left_arm_joints:
         init_pos2.append([val.home[joint]])
-    print(init_pos2)
     init_pos = [[0.3]] * len(val.left_arm_joint_indices)
     p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos2)
     time.sleep(0.5)
-
-    # Optional cartesian velocity controller test
-    #val.cart_vel_linear_test()
-    #val.cart_vel_angular_test()
-
-    # Get Jacobian testing script
-    jac_trn, jac_rot = get_jacobian(val.robot, val.left_tool)
-    jac = get_arm_jacobian(val.robot, "left", val.left_tool)
-
-    # Get pose testing script
-    pos, rot = get_pose(val.robot, val.left_tool)
-    print("axis angle result: {}".format(rot))
 
     # Define and draw goal pose
     cur_pos, cur_rot = get_pose(val.robot, val.left_tool)
@@ -39,9 +26,6 @@ def main():
     goal_rot = p.getQuaternionSlerp(cur_rot, (0, 0, 0, 1), 0.4)
     draw_pose(cur_pos, cur_rot)
     draw_pose(goal_pos, goal_rot)
-
-    # camera test
-    camera_test()
 
     val.pbvs("left", goal_pos, goal_rot,
              kv=1.0,
