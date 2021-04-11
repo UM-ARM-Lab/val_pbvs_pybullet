@@ -99,6 +99,8 @@ class vs():
                               twist,
                               duration,
                               r=100,
+                              damped = True,
+                              l_damped = 0.01,
                               v_threshold=0.15,
                               omega_threshold=0.6,
                               joint_vel_threshold=1.5,
@@ -145,8 +147,15 @@ class vs():
             J = get_arm_jacobian(self.robot, arm, tool, loc_pos=[0.0] * 3,
                                  perturb=self.perturb_jacobian, mu=self.perturb_Jac_joint_mu,
                                  sigma=self.perturb_Jac_joint_sigma)  # get current jacobian
+
             # calculate desired joint velocity (by multiplying jacobian pseudo-inverse), redundant -> min energy path
-            joint_vels = list(np.linalg.pinv(np.array(J)).dot(np.array(twist)).reshape(-1))
+            if damped:
+                # damped least-squares to make it invertible when near-singular
+                J = np.array(J)
+                joint_vels = list(np.linalg.inv(J.T.dot(J) + l_damped ** 2 * np.eye(J.shape[1])).dot(J.T).dot(
+                    np.array(twist)).reshape(-1))
+            else:
+                joint_vels = list(np.linalg.pinv(np.array(J)).dot(np.array(twist)).reshape(-1))
 
             # joint velocity safety check
             if max(joint_vels) > joint_vel_threshold:

@@ -27,6 +27,9 @@ def main():
     draw_pose(cur_pos, cur_rot)
     draw_pose(goal_pos, goal_rot)
 
+    for i in range(15):
+        print(i)
+        time.sleep(1)
     val.pbvs("left", goal_pos, goal_rot,
              kv=1.0,
              kw=0.8,

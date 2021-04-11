@@ -22,8 +22,8 @@ def main():
     time.sleep(0.5)
 
     # Optional cartesian velocity controller test
-    #val.cart_vel_linear_test()
-    #val.cart_vel_angular_test()
+    val.cart_vel_linear_test()
+    val.cart_vel_angular_test()
 
     # Get Jacobian testing script
     jac_trn, jac_rot = get_jacobian(val.robot, val.left_tool)
