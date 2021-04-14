@@ -173,6 +173,7 @@ def camera_test():
     plt.imshow(get_true_depth(depth_img, 0.1, 3.1))
     plt.show()
     '''
+    return rgb_img, depth_img
 
 
 def quat2se3(quat):

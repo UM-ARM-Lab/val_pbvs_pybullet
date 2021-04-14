@@ -27,19 +27,22 @@ def main():
     draw_pose(cur_pos, cur_rot)
     draw_pose(goal_pos, goal_rot)
 
+    '''
     for i in range(15):
-        print(i)
-        time.sleep(1)
+    print(i)
+    time.sleep(1)
+    '''
+
     val.pbvs("left", goal_pos, goal_rot,
              kv=1.0,
              kw=0.8,
              eps_pos=0.005,
              eps_rot=0.05,
              plot_pose=True,
-             perturb_jacobian=False,
+             perturb_jacobian=True,
              perturb_Jac_joint_mu=0.2,
              perturb_Jac_joint_sigma=0.2,
-             perturb_orientation=True,
+             perturb_orientation=False,
              mu_R=0.3,
              sigma_R=0.3,
              plot_result=True)

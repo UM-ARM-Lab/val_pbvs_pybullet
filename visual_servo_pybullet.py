@@ -6,6 +6,7 @@ import sophus as sp
 import matplotlib.pyplot as plt
 from pybullet_utils import *
 
+
 class vs():
     def __init__(self,
                  perturb_Jac_joint_mu=0.1,
@@ -67,6 +68,14 @@ class vs():
             'joint6': 0.6138027906417847,
             'joint7': -1.5069904327392578
         }
+        self.z_near = 0.1
+        self.z_far = 3.1
+        self.projectionMatrix = p.computeProjectionMatrixFOV(
+            fov=65.0,
+            aspect=1.0,
+            nearVal=self.z_near,
+            farVal=self.z_far)
+
         ###
         physicsClient = p.connect(p.GUI)  # or p.DIRECT for non-graphical version
         p.setGravity(0, 0, -9.8)
@@ -99,8 +108,8 @@ class vs():
                               twist,
                               duration,
                               r=100,
-                              damped = True,
-                              l_damped = 0.01,
+                              damped=True,
+                              l_damped=0.01,
                               v_threshold=0.15,
                               omega_threshold=0.6,
                               joint_vel_threshold=1.5,
@@ -275,6 +284,12 @@ class vs():
                 axs[i, 0].set_ylabel('cm')
                 # axs[i, 0].set_title(sub_titles[i][0])
             goal_rpy = p.getEulerFromQuaternion(goal_rot)
+            print("rpy final error: ")
+            # [-0.0056446   0.02230498  0.0133852 ]
+            # [-0.0152125   0.03453246  0.01255567]
+            # [-0.01669663  0.03247189  0.02033215]
+
+            print(eef_rot_rpy[-1, :] - goal_rpy)
             for i in range(3):
                 axs[i, 1].plot(times, eef_rot_rpy[:, i] * 180 / np.pi)
                 axs[i, 1].plot(times, goal_rpy[i] * np.ones(len(times)) * 180 / np.pi)
@@ -319,3 +334,27 @@ class vs():
         time.sleep(1)
         self.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t2)
         time.sleep(2)
+
+    def get_image(self, imsize=(214, 214), plot_cam_pose = True):
+        # Get "camera link pose", but currently it coincides with torso
+        cam_trans, cam_rot = get_pose(self.robot, self.jdict["realsense_joint"])
+        cam_rotm = np.array(p.getMatrixFromQuaternion(cam_rot)).reshape(3, 3)
+        # Double check whether it is true if torso joints move
+        cam_trans = (cam_rotm.dot(np.array([0.035, 0.032, 0.521])) + np.array(cam_trans)).tolist()
+        if plot_cam_pose:
+            draw_pose(cam_trans, cam_rot)
+        # Calculate extrinsic matrix
+        # target position is camera frame y axis tip in global frame
+        # up vector is the z axis of camera frame
+        viewMatrix = p.computeViewMatrix(
+            cameraEyePosition=cam_trans,
+            cameraTargetPosition=(cam_rotm.dot(cam_rotm[1, :]) + np.array(cam_trans)).tolist(),
+            cameraUpVector=cam_rotm[2, :].tolist())
+        width, height, rgbImg, depthImg, segImg = p.getCameraImage(
+            width=imsize[0],
+            height=imsize[1],
+            viewMatrix=viewMatrix,
+            projectionMatrix=self.projectionMatrix,
+            flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX)
+        # depth image transformed to true depth, each pixel in segImg is the linkID
+        return rgbImg[:, :, :3], get_true_depth(depthImg, self.z_near, self.z_far), ((segImg >> 24) - 1)
