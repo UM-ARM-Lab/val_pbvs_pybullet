@@ -1,6 +1,7 @@
 import pybullet as p
 import numpy as np
-
+import sophus as sp
+from scipy.spatial.transform import Rotation as R
 
 # this mp4 recording requires ffmpeg installed
 # mp4log = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,"humanoid.mp4")
@@ -39,7 +40,7 @@ def draw_cross(pos, length=0.05, width=5):
                        lineWidth=width)
 
 
-def draw_pose(trans, rot, uids=None, relength=0.05, width=5, axis_len=0.1):
+def draw_pose(trans, rot, uids=None, width=5, axis_len=0.1):
     unique_ids = []
     coords = np.array(p.getMatrixFromQuaternion(rot)).reshape(3, 3) * axis_len + np.array(trans).reshape(3, 1)
     colors = np.eye(3)
@@ -175,7 +176,14 @@ def camera_test():
     '''
     return rgb_img, depth_img
 
-
 def quat2se3(quat):
     axis, angle = p.getAxisAngleFromQuaternion(quat)
     return np.array(axis) * angle
+
+def trans_rot2SE3(trans, rot):
+    rotm = np.array(p.getMatrixFromQuaternion(rot)).reshape(3, 3)
+    return sp.SE3(rotm, np.array(trans))
+
+def SE32_trans_rot(pose):
+    r = R.from_matrix(pose.rotationMatrix())
+    return list(pose.translation()), list(r.as_quat())

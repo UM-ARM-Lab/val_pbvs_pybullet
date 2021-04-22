@@ -5,7 +5,8 @@ import numpy as np
 import sophus as sp
 import matplotlib.pyplot as plt
 from pybullet_utils import *
-
+from particle_filter import *
+from multiprocessing import Process, Value
 
 class vs():
     def __init__(self,
@@ -101,7 +102,13 @@ class vs():
         # index of the link at the left/right gripper tip when gripper is closed
         self.left_tool = self.jdict["left_tool_joint"]
         self.right_tool = self.jdict["right_tool_joint"]
+
+        # store camera pose in robot frame
+        cam_trans, cam_rot = self.get_cam_pose()
+        self.Trc = trans_rot2SE3(cam_trans, cam_rot)
+
         ##################### finish initialize ##################
+
 
     def cartesian_vel_control(self,
                               arm,
@@ -111,7 +118,7 @@ class vs():
                               damped=True,
                               l_damped=0.01,
                               v_threshold=0.15,
-                              omega_threshold=0.6,
+                              omega_threshold=1.0,
                               joint_vel_threshold=1.5,
                               cond_threshold=100000,
                               show_cond=False,
@@ -182,7 +189,9 @@ class vs():
             if cond > cond_threshold:
                 print("Large conditional number! {:.2f}".format(cond))
                 break
-
+            # print([p.getJointInfo(self.robot, i)[1].decode("ascii") for i in arm_joint_indices])
+            # p.getJointState(self.robot, )
+            print(arm_joint_indices)
             p.setJointMotorControlArray(self.robot, arm_joint_indices, controlMode=p.VELOCITY_CONTROL,
                                         targetVelocities=joint_vels)
             p.stepSimulation()
@@ -206,7 +215,8 @@ class vs():
              perturb_orientation=False,
              mu_R=0.4,
              sigma_R=0.4,
-             plot_result=False):
+             plot_result=False,
+             plot_percent_error=False):
 
         # Initialize variables
         self.perturb_Jac_joint_mu = perturb_Jac_joint_mu
@@ -335,12 +345,17 @@ class vs():
         self.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t2)
         time.sleep(2)
 
-    def get_image(self, imsize=(214, 214), plot_cam_pose = True):
+    def get_cam_pose(self):
         # Get "camera link pose", but currently it coincides with torso
         cam_trans, cam_rot = get_pose(self.robot, self.jdict["realsense_joint"])
         cam_rotm = np.array(p.getMatrixFromQuaternion(cam_rot)).reshape(3, 3)
         # Double check whether it is true if torso joints move
         cam_trans = (cam_rotm.dot(np.array([0.035, 0.032, 0.521])) + np.array(cam_trans)).tolist()
+        return cam_trans, cam_rot
+
+    def get_image(self, imsize=(214, 214), plot_cam_pose = True):
+        cam_trans, cam_rot = self.get_cam_pose()
+        cam_rotm = np.array(p.getMatrixFromQuaternion(cam_rot)).reshape(3, 3)
         if plot_cam_pose:
             draw_pose(cam_trans, cam_rot)
         # Calculate extrinsic matrix
@@ -358,3 +373,78 @@ class vs():
             flags=p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX)
         # depth image transformed to true depth, each pixel in segImg is the linkID
         return rgbImg[:, :, :3], get_true_depth(depthImg, self.z_near, self.z_far), ((segImg >> 24) - 1)
+
+    def render_eef(self, eef_pose):
+        """
+        In Pybullet , render left/right two grippers image given eef pose in camera frame
+        Camera's pose at origin,
+        :param eef_pose: eef pose in camera frame
+        :return: image
+        """
+        pass
+
+    def hog_likelihood(self, img_measured, img_rendered):
+        """
+        Compute log_likelihood of measurement log p(z|x)
+        :param img_measured:
+        :param img_rendered:
+        :return:
+        """
+        pass
+
+
+    def process_model(self, x, u, w):
+        """
+        process model X[k+1] = X[k] * u * Exp(w)
+        :param x: the SE(3) pose of the end effector in camera frame sp.SE(3)
+        :param u: Motion integrated from velocity command sp.SE(3)
+        :param w: noise in motion propagation R6, so(3)
+        :return: propagated pose, sp.SE(3)
+        """
+        f = x * u * sp.SE3.exp(w)
+        return f
+
+    def measurement_model(self):
+        pass
+
+    def pf_init(self, print_init_poses = True):
+        """
+        initialize parameters of particle filter
+        :return:
+        """
+        # process model X[k+1] = X[k] * Exp(u) * Exp(w)
+        # process noise covariance in R6, isomorphic to se(3)
+        Q = np.diag(np.power([0.01, 0.01, 0.01, 0.01, 0.01, 0.01], 2))
+        # initial state covariance in pose, in R6, isomorphic to se(3)
+        #Sigma_init = 0.0001 * np.eye(6)
+        Sigma_init = np.diag(np.power(3 * [0.005] + 3 * [0.05], 2))
+
+        # build the system
+        sys = myStruct()
+        sys.f = self.process_model
+        sys.h = self.measurement_model
+        sys.Q = Q
+
+        # initialization
+        init = myStruct()
+        init.n = 50
+        # get eef pose from fk, represent eef pose in camera frame
+        eef_trans, eef_rot = get_pose(self.robot, self.left_tool)
+        init.x = self.Trc.inverse() * trans_rot2SE3(eef_trans, eef_rot)
+        init.Sigma = Sigma_init
+
+        self.pf = particle_filter(sys, init)
+        self.shared_pf_fin = Value('i', 0)
+
+        # print initial poses
+        for pose_cam in self.pf.p.x:
+            pose_robot = self.Trc * pose_cam
+            trans, rot = SE32_trans_rot(pose_robot)
+            draw_pose(trans, rot, width=1)
+
+    def pbvs_pf(self):
+        # initialize particle filter
+        self.pf_init()
+
+
+
