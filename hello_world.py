@@ -52,7 +52,7 @@ def main():
              perturb_jacobian=False,
              perturb_Jac_joint_mu=0.2,
              perturb_Jac_joint_sigma=0.2,
-             perturb_orientation=True,
+             perturb_orientation=False,
              mu_R=0.3,
              sigma_R=0.3,
              plot_result=True)

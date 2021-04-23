@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from pybullet_utils import *
 from particle_filter import *
 from multiprocessing import Process, Value
+from renderer import *
+
 
 class vs():
     def __init__(self,
@@ -109,7 +111,6 @@ class vs():
 
         ##################### finish initialize ##################
 
-
     def cartesian_vel_control(self,
                               arm,
                               twist,
@@ -190,8 +191,6 @@ class vs():
                 print("Large conditional number! {:.2f}".format(cond))
                 break
             # print([p.getJointInfo(self.robot, i)[1].decode("ascii") for i in arm_joint_indices])
-            # p.getJointState(self.robot, )
-            print(arm_joint_indices)
             p.setJointMotorControlArray(self.robot, arm_joint_indices, controlMode=p.VELOCITY_CONTROL,
                                         targetVelocities=joint_vels)
             p.stepSimulation()
@@ -353,7 +352,7 @@ class vs():
         cam_trans = (cam_rotm.dot(np.array([0.035, 0.032, 0.521])) + np.array(cam_trans)).tolist()
         return cam_trans, cam_rot
 
-    def get_image(self, imsize=(214, 214), plot_cam_pose = True):
+    def get_image(self, imsize=(214, 214), plot_cam_pose=False):
         cam_trans, cam_rot = self.get_cam_pose()
         cam_rotm = np.array(p.getMatrixFromQuaternion(cam_rot)).reshape(3, 3)
         if plot_cam_pose:
@@ -363,8 +362,8 @@ class vs():
         # up vector is the z axis of camera frame
         viewMatrix = p.computeViewMatrix(
             cameraEyePosition=cam_trans,
-            cameraTargetPosition=(cam_rotm.dot(cam_rotm[1, :]) + np.array(cam_trans)).tolist(),
-            cameraUpVector=cam_rotm[2, :].tolist())
+            cameraTargetPosition=(cam_rotm.dot(np.array([0, 1, 0]).T) + np.array(cam_trans)).tolist(),
+            cameraUpVector=cam_rotm[:, 2].tolist())
         width, height, rgbImg, depthImg, segImg = p.getCameraImage(
             width=imsize[0],
             height=imsize[1],
@@ -392,7 +391,6 @@ class vs():
         """
         pass
 
-
     def process_model(self, x, u, w):
         """
         process model X[k+1] = X[k] * u * Exp(w)
@@ -404,10 +402,11 @@ class vs():
         f = x * u * sp.SE3.exp(w)
         return f
 
-    def measurement_model(self):
+    def measurement_model(self, img):
+
         pass
 
-    def pf_init(self, print_init_poses = True):
+    def pf_init(self, print_init_poses=True):
         """
         initialize parameters of particle filter
         :return:
@@ -416,8 +415,8 @@ class vs():
         # process noise covariance in R6, isomorphic to se(3)
         Q = np.diag(np.power([0.01, 0.01, 0.01, 0.01, 0.01, 0.01], 2))
         # initial state covariance in pose, in R6, isomorphic to se(3)
-        #Sigma_init = 0.0001 * np.eye(6)
-        Sigma_init = np.diag(np.power(3 * [0.005] + 3 * [0.05], 2))
+        # Sigma_init = 0.0001 * np.eye(6)
+        Sigma_init = np.diag(np.power(3 * [0.003] + 3 * [0.05], 2))
 
         # build the system
         sys = myStruct()
@@ -433,18 +432,29 @@ class vs():
         init.x = self.Trc.inverse() * trans_rot2SE3(eef_trans, eef_rot)
         init.Sigma = Sigma_init
 
-        self.pf = particle_filter(sys, init)
+        self.pf = particle_filter(sys, init, sigma=0.1)
         self.shared_pf_fin = Value('i', 0)
 
         # print initial poses
-        for pose_cam in self.pf.p.x:
-            pose_robot = self.Trc * pose_cam
-            trans, rot = SE32_trans_rot(pose_robot)
-            draw_pose(trans, rot, width=1)
+        print(print_init_poses)
+        if print_init_poses:
+            for pose_cam in self.pf.p.x:
+                pose_robot = self.Trc * pose_cam
+                trans, rot = SE32_trans_rot(pose_robot)
+                draw_pose(trans, rot, width=0.2)
 
-    def pbvs_pf(self):
+    def pbvs_pf(self, print_init_poses=True):
         # initialize particle filter
-        self.pf_init()
+        self.pf_init(print_init_poses = print_init_poses)
+        img_observed, depth, seg = self.get_image()
+        print(self.pf.p.w)
+        self.pf.importance_measurement(img_observed)
+        print(self.pf.p.w)
+        print(self.pf.Neff)
 
-
-
+        # show pose with largest likelihood
+        # TODO: get the weighted average of poses
+        pose_cam_max = self.pf.p.x[np.argmax(self.pf.p.w)]
+        pose_robot_max = self.Trc * pose_cam_max
+        trans, rot = SE32_trans_rot(pose_robot_max)
+        draw_pose(trans, rot, width=3)

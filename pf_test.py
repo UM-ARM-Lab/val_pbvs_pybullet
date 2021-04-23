@@ -20,8 +20,8 @@ def main():
     p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos2)
     time.sleep(0.5)
 
-    val.pf_init(print_init_poses=True)
-    time.sleep(5)
+    val.pbvs_pf(print_init_poses=False)
+    time.sleep(10)
 
     p.disconnect()
 

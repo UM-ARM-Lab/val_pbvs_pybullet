@@ -5,18 +5,25 @@ from skimage.feature import hog
 from skimage import data, exposure
 from visual_servo_pybullet import vs
 from pybullet_utils import *
-
+import time
 
 def hog_test(image):
-    fd, hog_image = hog(image, orientations=8, pixels_per_cell=(16, 16),
-                        cells_per_block=(1, 1), visualize=True, multichannel=True)
-
+    start = time.process_time()
+    #start = time.time()
+    fd = hog(image, orientations=8, pixels_per_cell=(16, 16),
+                        cells_per_block=(1, 1), multichannel=True)
+    print(time.process_time() - start)
+    #print(f'Time: {time.time() - start}')
+    print(fd.shape)
+    # print(hog_image.shape)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), sharex=True, sharey=True)
 
     ax1.axis('off')
     ax1.imshow(image, cmap=plt.cm.gray)
     ax1.set_title('Input image')
 
+    fd, hog_image = hog(image, orientations=8, pixels_per_cell=(16, 16),
+                        cells_per_block=(1, 1), multichannel=True, visualize = True)
     # Rescale histogram for better display
     hog_image_rescaled = exposure.rescale_intensity(hog_image, in_range=(0, 10))
 

@@ -1,14 +1,16 @@
 #!usr/bin/env python
 
 #
-# Author: Fangtong Liu
-# Date: 04/02/2020
+# Author: Haoran Cheng, adapted from Fangtong Liu's work
 #
 
 import numpy as np
 from numpy.random import randn, rand
 from scipy.stats import multivariate_normal
 import sophus as sp
+from renderer import *
+from skimage.feature import hog
+from skimage import data, exposure
 
 class myStruct():
     def __init__(self):
@@ -29,7 +31,7 @@ def wrapToPI(phase):
 # filter a.k.a bootstrap filter
 class particle_filter:
 
-    def __init__(self, system, init):
+    def __init__(self, system, init, sigma = 0.1):
         # Particle filter construct an instance of this class
         #
         # Input:
@@ -40,17 +42,25 @@ class particle_filter:
         self.Q = system.Q  # process noise covariance
         self.LQ = np.linalg.cholesky(self.Q)  # Cholesky factor of Q
         self.n = init.n  # number of particles
+        self.h = system.h
+        self.sigma = sigma
 
         # initialize particles
         self.p = myStruct()  # particles
 
         wu = 1 / self.n  # uniform weights
         L_init = np.linalg.cholesky(init.Sigma)
+
+
         for i in range(self.n):
             self.p.x.append(init.x * sp.SE3.exp(np.dot(L_init, randn(6, 1))))
             # self.p.x.append(np.dot(L_init, 0.5 * np.ones([len(init.x), 1])) + init.x)
             self.p.w.append(wu)
         self.p.w = np.array(self.p.w).reshape(-1, 1)
+
+        # initialize renderer
+        self.rd = renderer()
+
 
     def sample_motion(self):
         # A simple random walk motion model
@@ -69,19 +79,24 @@ class particle_filter:
             # propagate the particle
             self.p.x[i, :] = self.f(self.p.x[i, :], w).reshape(-1)
 
-    def importance_measurement(self, z, h):
+    def importance_measurement(self, img, left_gripper_joint=0, left_gripper2_joint=0):
         # compare important weight for each particle based on the obtain range and bearing measurements
         #
         # Inputs:
         #   z: measurement
         w = np.zeros([self.n, 1])  # importance weights
+        hog_observed = hog(img, orientations=8, pixels_per_cell=(16, 16),
+                                cells_per_block=(1, 1), multichannel=True)
         for i in range(self.n):
-            # compute innovation statistics
-            # We know here z[1] is an angle
-            v = z - h(self.p.x[i, :].reshape(self.p.x.shape[1],1))
-            w[i] = multivariate_normal.pdf(v.reshape(-1), np.zeros(z.shape[0]), self.R)
+            # render img at the pose of each particle
+            img_rd = self.rd.render_img(left_gripper_joint, left_gripper2_joint, self.p.x[i])
+            hog_rd = hog(img_rd, orientations=8, pixels_per_cell=(16, 16),
+                                cells_per_block=(1, 1), multichannel=True)
+            likelihood = np.exp(-1/self.sigma * np.linalg.norm(hog_observed - hog_rd))
+            print("likelihood for particle {} is {}".format(i, likelihood))
+            self.p.w[i] = self.p.w[i] * likelihood
+
         # update and normalize weights
-        self.p.w = np.multiply(self.p.w, w)  # since we used motion model to sample
         self.p.w = self.p.w / np.sum(self.p.w)
         # compute effective number of particles
         self.Neff = 1 / np.sum(np.power(self.p.w, 2))  # effective number of particles

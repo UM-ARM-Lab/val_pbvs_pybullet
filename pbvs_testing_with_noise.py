@@ -23,7 +23,7 @@ def main():
     # Define and draw goal pose
     cur_pos, cur_rot = get_pose(val.robot, val.left_tool)
     goal_pos = tuple(np.asarray(np.array(cur_pos) + np.array([0.05, 0.05, -0.1])))
-    goal_rot = p.getQuaternionSlerp(cur_rot, (0, 0, 0, 1), 0.4)
+    goal_rot = p.getQuaternionSlerp(cur_rot, (0, 0, 0, 1), 0.4) # weird thing happens if it is 0.7
     draw_pose(cur_pos, cur_rot)
     draw_pose(goal_pos, goal_rot)
 
@@ -39,7 +39,7 @@ def main():
              eps_pos=0.005,
              eps_rot=0.05,
              plot_pose=True,
-             perturb_jacobian=True,
+             perturb_jacobian=False,
              perturb_Jac_joint_mu=0.2,
              perturb_Jac_joint_sigma=0.2,
              perturb_orientation=False,
