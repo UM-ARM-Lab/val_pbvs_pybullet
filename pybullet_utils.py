@@ -79,13 +79,15 @@ def get_pos(robot, link):
     return link_trn
 
 
-def get_pose(robot, link):
+def get_pose(robot, link, SE3 = False):
     """
     :param robot: body unique id of robot
     :param link: linkID
     :return: Cartesian position of center of mass of link
              Cartesian rotation of center of mass of link in the form of se(3)
              i.e. angle-axis representation, axis vector scaled by angle
+
+    if SE3 = True, returns the pose in SE(3)
     """
     result = p.getLinkState(robot,
                             link,
@@ -96,6 +98,8 @@ def get_pose(robot, link):
     axis_angle = p.getAxisAngleFromQuaternion(link_rot)
     print(axis_angle)
     '''
+    if SE3:
+        return trans_rot2SE3(link_trn, link_rot)
     return link_trn, link_rot
 
 

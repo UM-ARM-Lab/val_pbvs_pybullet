@@ -26,13 +26,14 @@ def main():
     goal_rot = p.getQuaternionSlerp(cur_rot, (0, 0, 0, 1), 0.4) # weird thing happens if it is 0.7
     draw_pose(cur_pos, cur_rot)
     draw_pose(goal_pos, goal_rot)
-
+    # transform goal_pose to camera frame
+    goal_pos, goal_rot = SE32_trans_rot(val.Trc.inverse() * trans_rot2SE3(goal_pos, goal_rot))
     '''
     for i in range(15):
     print(i)
     time.sleep(1)
     '''
-
+    '''
     val.pbvs("left", goal_pos, goal_rot,
              kv=1.0,
              kw=0.8,
@@ -46,6 +47,10 @@ def main():
              mu_R=0.3,
              sigma_R=0.3,
              plot_result=True)
+    '''
+
+    val.pbvs_pf(goal_pos, goal_rot, print_init_poses=False)
+
     p.disconnect()
 
 

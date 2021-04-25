@@ -13,6 +13,7 @@ SO3([[1, 0, 0],
      [0, 0, 1]])
 '''
 T = sp.SE3(np.eye(3), np.arange(3))
+print(sp.SE3.log(T))
 print(type(T.translation()))
 R =  sp.SO3([[0, 1, 0],
              [0, 0, 1],
