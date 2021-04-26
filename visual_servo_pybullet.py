@@ -6,8 +6,12 @@ import sophus as sp
 import matplotlib.pyplot as plt
 from pybullet_utils import *
 from particle_filter import *
-from multiprocessing import Process, Value, Array
+from multiprocessing import Process, Value, Array, shared_memory
 from renderer import *
+
+
+def tau(x):
+    return (1 - (x - 1) ** 4) ** (1 / 4)
 
 
 class vs():
@@ -255,11 +259,18 @@ class vs():
             # If using particle filter and the hog computation has finished, exit pbvs control
             # and assign total estimated motion in eef frame
             if pf_mode and self.shared_pf_fin.value == 1:
-                #print("motion: ", motion)
-                self.motion = motion
+                # print("motion: ", motion)
+                # self.motion = motion
                 motion_truth = (self.Trc * self.cur_pose_est).inverse() * get_pose(self.robot, tool, SE3=True)
-                #print("motion truth:", motion_truth)
-                self.motion = motion_truth
+                # print("motion truth:", motion_truth)
+                self.perturb_motion_R_mu = 0.0
+                self.perturb_motion_R_sigma = 0.0
+                self.perturb_motion_t_mu = 0.0
+                self.perturb_motion_t_sigma = self.perturb_motion_R_sigma
+                dR = sp.SO3.exp(np.random.normal(self.perturb_motion_R_mu, self.perturb_motion_R_sigma, 3)).matrix()
+                dt = np.random.normal(self.perturb_motion_t_mu, self.perturb_motion_t_sigma, 3)
+                # self.draw_pose_cam(motion)
+                self.motion = motion_truth * sp.SE3(dR, dt)
                 return
             if camera_update:
                 camera_test()
@@ -269,7 +280,7 @@ class vs():
             else:
                 cur_pos, cur_rot = SE32_trans_rot(self.Trc.inverse() * get_pose(self.robot, tool, SE3=True))
             if plot_pose:
-                self.draw_pose_cam(trans_rot2SE3(cur_pos, cur_rot), uids = pos_plot_id)
+                self.draw_pose_cam(trans_rot2SE3(cur_pos, cur_rot), uids=pos_plot_id)
             if plot_result:
                 eef_pos.append(cur_pos)
                 eef_rot.append(cur_rot)
@@ -285,7 +296,7 @@ class vs():
                 break
             else:
                 pass
-                #print("Error to goal, position: {:2f}, orientation: {:2f}".format(err_pos, err_rot))
+                # print("Error to goal, position: {:2f}, orientation: {:2f}".format(err_pos, err_rot))
 
             Rsc = np.array(p.getMatrixFromQuaternion(cur_rot)).reshape(3, 3)
             # Perturb Rsc in SO(3) by a random variable in tangent space so(3)
@@ -304,10 +315,11 @@ class vs():
             if pf_mode:
                 delta_t = time.time() - start_loop
                 motion = motion * sp.SE3.exp(twist_local * delta_t)
-                self.draw_pose_cam(motion)
+                # self.draw_pose_cam(motion)
 
         self.goal_reached = True
         print("PBVS goal achieved!")
+
         if plot_result:
             eef_pos = np.array(eef_pos)
             eef_rot_rpy = np.array([p.getEulerFromQuaternion(quat) for quat in eef_rot])
@@ -461,14 +473,18 @@ class vs():
 
         # initialization
         init = myStruct()
-        init.n = 50
+        init.n = 200
         # get eef pose from fk, represent eef pose in camera frame
         eef_trans, eef_rot = get_pose(self.robot, self.left_tool)
         init.x = self.Trc.inverse() * trans_rot2SE3(eef_trans, eef_rot)
         init.Sigma = Sigma_init
 
-        self.pf = particle_filter(sys, init, sigma=0.1) # sigma, parameter in HOG likelihood calculation
+        self.pf = particle_filter(sys, init, sigma=0.1)  # sigma, parameter in HOG likelihood calculation
+
+        # the member variable of shared flag, indicating end of HOG likelihood calculation, accessible by member function
+        # velocity controller
         self.shared_pf_fin = Value('i', 0)
+        self.particle_plot_uids = []
         self.goal_reached = False
 
         # print initial poses
@@ -494,7 +510,7 @@ class vs():
         self.pf_init(print_init_poses=print_init_poses)
         img_observed, depth, seg = self.get_image()
         print(self.pf.p.w)
-        self.pf.importance_measurement(img_observed, self.shared_pf_fin)
+        self.pf.importance_measurement(img_observed, self.shared_pf_fin, self.pf.shared_w)
         print(self.pf.p.w)
         print(self.pf.Neff)
 
@@ -516,22 +532,24 @@ class vs():
 
     def pbvs_pf(self, goal_pos, goal_rot, print_init_poses=True):
         # initialize particle filter
+        print("====== start pbvs_pf initialization ======")
         self.pf_init(print_init_poses=print_init_poses)
-        self.draw_particle_pos()
+        self.draw_particle_pose()
         img_observed, depth, seg = self.get_image()
         self.pf.importance_measurement(img_observed, self.shared_pf_fin)
         self.cur_pose_est = self.pf.get_pose_est()
-        print("current pose after importance measurement")
-        self.draw_pose_cam(self.cur_pose_est)
+        # print("current pose after initial importance measurement")
+        # self.draw_pose_cam(self.cur_pose_est)
+        print("====== finitsh pbvs_pf initialization ======")
+        it = 1
         while not self.goal_reached:
             self.shared_pf_fin.value = 0
-            # self.shared_pose_hog = Array("p", [0, 0, 0, 0, 0, 0])
-            # print("start multiprocessing")
             img_observed, depth, seg = self.get_image()
-            print(self.pf.p.w)
+
             p_pf = Process(target=self.pf.importance_measurement, args=(img_observed, self.shared_pf_fin))
             p_pf.start()
-            print("start vel controller")
+            print("=========== start vel controller, iteration {} ===========".format(it))
+            it += 1
             self.pbvs("left", goal_pos, goal_rot,
                       kv=0.5,
                       kw=0.2,
@@ -548,28 +566,48 @@ class vs():
                       pf_mode=True)
             print("finish vel controller")
             p_pf.join()
-            print(self.pf.p.w)
+
             if self.goal_reached:
                 break
 
-            pose_weighted = self.pf.get_pose_est()
-            print("After measurement update, before propagation")
-            self.draw_pose_cam(pose_weighted, width=2)
-            time.sleep(2)
+            # access resulting weights from HOG measurement update in the multiprocessing and copy into self.pf.w
+            existing_shm = shared_memory.SharedMemory(name=self.pf.shm_name)
+            w = np.ndarray(self.pf.p.w.shape, dtype=np.float, buffer=existing_shm.buf)
+            self.pf.p.w[:] = w[:]
+            # update number of effective particles
+            self.pf.update_neef()
 
-            # propagate pose
+            # pose_weighted = self.pf.get_pose_est()
+            # print("After measurement update, before propagation")
+            # self.draw_pose_cam(pose_weighted, width=2)
+            # time.sleep(2)
+
+            # propagate pose, draw pose and particles
             self.pf.sample_motion(self.motion)
-            self.cur_pose_est =self.pf.get_pose_est()
-            print("propagated estimate")
-            self.draw_particle_pos()
-            self.draw_pose_cam(self.cur_pose_est, width=2)
-            print("resample? {}".format(self.pf.Neff))
-            #resampling
+            self.cur_pose_est = self.pf.get_pose_est()
+            self.draw_particle_pose()
+            self.draw_pose_cam(self.cur_pose_est, width=2, uids=[100, 101, 102])
+
+            # resampling
+            print("Neef after importance measurement {}".format(self.pf.Neff))
             if self.pf.Neff < self.pf.n / 5:
+                print("Resampling")
                 self.pf.resampling()
+            else:
+                print("No resampling")
 
+    # since Trc, a member variable of vs is used, cannot be a member function of pf
+    def draw_particle_pose(self, axis_len=0.003, width=0.04):
+        max_w = max(self.pf.p.w)
+        for i, pose in enumerate(self.pf.p.x):
+            pose_r = self.Trc * pose
+            trans_r, rot_r = SE32_trans_rot(pose_r)
+            # if it is first time to draw particle poses, assign the uids
+            if len(self.particle_plot_uids) < self.pf.n:
+                uids = draw_pose(trans_r, rot_r, axis_len=axis_len, width=width)
+                self.particle_plot_uids.append(uids)
+            else:
+                draw_pose(trans_r, rot_r, uids=self.particle_plot_uids[i], axis_len=axis_len, width=width)
 
-    def draw_particle_pos(self):
-        for pose in self.pf.p.x:
-            pose_r = self.Trc.rotationMatrix().dot(pose.translation()) + self.Trc.translation()
-            draw_cross(pose_r, length = 0.005, width=0.04)
+            # transparency proportional to weight not working yet
+            # alpha=tau(self.pf.w[i] / max_w)

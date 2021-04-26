@@ -11,7 +11,7 @@ import sophus as sp
 from renderer import *
 from skimage.feature import hog
 from skimage import data, exposure
-
+from multiprocessing import Array, shared_memory
 class myStruct():
     def __init__(self):
         self.x = []
@@ -31,7 +31,7 @@ def wrapToPI(phase):
 # filter a.k.a bootstrap filter
 class particle_filter:
 
-    def __init__(self, system, init, sigma = 0.1):
+    def __init__(self, system, init, sigma = 10000):
         # Particle filter construct an instance of this class
         #
         # Input:
@@ -59,9 +59,15 @@ class particle_filter:
             self.p.w.append(wu)
         self.p.w = np.array(self.p.w).reshape(-1, 1)
 
+        # the shared variable of all weights of particles, needed because likelihood in the multiprocessing modifies it
+        self.shm = shared_memory.SharedMemory(create=True, size=self.p.w.nbytes)
+        self.w = np.ndarray(self.p.w.shape, dtype=self.p.w.dtype, buffer=self.shm.buf)
+        self.shm_name = self.shm.name
         # initialize renderer
         self.rd = renderer()
 
+    def __del__(self):
+        self.shm.unlink()
 
     def sample_motion(self, motion):
         # A simple random walk motion model
@@ -85,7 +91,7 @@ class particle_filter:
         #
         # Inputs:
         #   z: measurement
-        w = np.zeros([self.n, 1])  # importance weights
+        print("starting importance measurement")
         hog_observed = hog(img, orientations=8, pixels_per_cell=(16, 16),
                                 cells_per_block=(1, 1), multichannel=True)
         for i in range(self.n):
@@ -99,10 +105,18 @@ class particle_filter:
 
         # update and normalize weights
         self.p.w = self.p.w / np.sum(self.p.w)
+
+        # copy resulting weights to the shared w
+        existing_shm = shared_memory.SharedMemory(name=self.shm_name)
+        w = np.ndarray(self.p.w.shape, dtype=np.float, buffer=existing_shm.buf)
+        w[:] = self.p.w[:]
+        shared_pf_fin.value = 1
+        print("finish importance measurement")
+
+    def update_neef(self):
         # compute effective number of particles
         self.Neff = 1 / np.sum(np.power(self.p.w, 2))  # effective number of particles
-        print("Neef after importance measurement {}".format(self.Neff))
-        shared_pf_fin.value = 1
+
 
     def get_pose_est(self):
         """
@@ -116,9 +130,6 @@ class particle_filter:
         return pose_est_SE3
 
     def resampling(self):
-        print("resample")
-        #self.Neff = 1 / np.sum(np.power(self.p.w, 2))
-        #print("Neef before resampling: {}".format(self.Neff))
         # low variance resampling
         W = np.cumsum(self.p.w)
         r = rand(1) / self.n
@@ -130,8 +141,7 @@ class particle_filter:
                 j = j + 1
             self.p.x[i] = self.p.x[j]
             self.p.w[i] = 1 / self.n
-        #self.Neff = 1 / np.sum(np.power(self.p.w, 2))
-        #print("Neef after resampling: {}".format(self.Neff))
+
 
 
 

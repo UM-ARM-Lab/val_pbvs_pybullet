@@ -26,24 +26,25 @@ def get_joint_states(robot):
 
 
 def draw_cross(pos, length=0.05, width=5):
+
     p.addUserDebugLine(np.asarray(np.array(pos) - np.array([length, 0, 0])),
                        np.asarray(np.array(pos) + np.array([length, 0, 0])),
-                       lineColorRGB=[1.0, 0, 0],
+                       lineColorRGB=[1, 0, 0],
                        lineWidth=width)
     p.addUserDebugLine(np.asarray(np.array(pos) - np.array([0, length, 0])),
                        np.asarray(np.array(pos) + np.array([0, length, 0])),
-                       lineColorRGB=[0, 1.0, 0],
+                       lineColorRGB=[0, 1, 0],
                        lineWidth=width)
     p.addUserDebugLine(np.asarray(np.array(pos) - np.array([0, 0, length])),
                        np.asarray(np.array(pos) + np.array([0, 0, length])),
-                       lineColorRGB=[0, 0, 1.0],
+                       lineColorRGB=[0, 0, 1],
                        lineWidth=width)
 
 
-def draw_pose(trans, rot, uids=None, width=5, axis_len=0.1):
+def draw_pose(trans, rot, uids=None, width=5, axis_len=0.1, alpha = 1.0):
     unique_ids = []
     coords = np.array(p.getMatrixFromQuaternion(rot)).reshape(3, 3) * axis_len + np.array(trans).reshape(3, 1)
-    colors = np.eye(3)
+    colors = np.eye(3) * alpha + np.ones((3,3)) * (1 - alpha)
     if uids is None:
         for i in range(3):
             unique_ids.append(p.addUserDebugLine(trans,
@@ -58,7 +59,7 @@ def draw_pose(trans, rot, uids=None, width=5, axis_len=0.1):
                                                  lineColorRGB=np.asarray(colors[:, i]),
                                                  lineWidth=width,
                                                  replaceItemUniqueId=uids[i]))
-
+        return None
 
 def erase_pos(line_ids):
     for line_id in line_ids:
