@@ -74,15 +74,15 @@ def main():
                  perturb_Jac_joint_mu=0.2,
                  perturb_Jac_joint_sigma=0.2,
                  perturb_orientation=True,
-                 mu_R=0.3,
-                 sigma_R=0.3,
+                 mu_R=0.15,
+                 sigma_R=0.15,
                  plot_result=True,
                  fig=fig1,
                  axs=axs1)
     fig1.text(0.5, 0.04, "Time(s)", ha="center")
     fig1.tight_layout()
     #plt.text(0.5, 0.04, "Time(s)", ha="center")
-    plt.legend([l,l1,l2,l3], ["Goal", "No noise", "Jacobian noise", "Rsc Noise"])
+    plt.legend([l,l1,l2,l3], ["Goal", "No noise", "Jacobian noise", "Rse Noise"])
     plt.show()
     time.sleep(1)
     '''

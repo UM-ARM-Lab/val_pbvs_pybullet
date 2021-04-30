@@ -305,6 +305,9 @@ class vs():
             # Perturb Rsc in SO(3) by a random variable in tangent space so(3)
             if perturb_orientation:
                 dR = sp.SO3.exp(np.random.normal(self.perturb_R_mu, self.perturb_R_sigma, 3))
+                #print(dR)
+                # Angular noise added
+                # print(np.linalg.norm(sp.SO3.log(dR)))
                 Rsc = Rsc.dot(dR.matrix())
 
             twist_local = np.hstack((np.array(pos_cg) * kv, np.array(quat2se3(rot_cg)) * kw)).reshape(6, 1)
