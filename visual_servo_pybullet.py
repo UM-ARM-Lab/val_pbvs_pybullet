@@ -271,7 +271,7 @@ class vs():
                 dt = np.random.normal(self.perturb_motion_t_mu, self.perturb_motion_t_sigma, 3)
                 # self.draw_pose_cam(motion)
                 self.motion = motion_truth * sp.SE3(dR, dt)
-                return
+                return times, eef_pos, eef_rot
             if camera_update:
                 camera_test()
             # get current eef pose in camera frame
@@ -282,9 +282,10 @@ class vs():
             if plot_pose:
                 self.draw_pose_cam(trans_rot2SE3(cur_pos, cur_rot), uids=pos_plot_id)
             if plot_result:
-                eef_pos.append(cur_pos)
-                eef_rot.append(cur_rot)
-                times.append(time.time() - start)
+                cur_pos2, cur_rot2 = SE32_trans_rot(self.Trc.inverse() * get_pose(self.robot, tool, SE3=True))
+                eef_pos.append(cur_pos2)
+                eef_rot.append(cur_rot2)
+                times.append(time.time())
                 print(time.time() - start)
             cur_pos_inv, cur_rot_inv = p.invertTransform(cur_pos, cur_rot)
             # Pose of goal in camera frame
@@ -319,45 +320,9 @@ class vs():
 
         self.goal_reached = True
         print("PBVS goal achieved!")
+        return times, eef_pos, eef_rot
 
-        if plot_result:
-            eef_pos = np.array(eef_pos)
-            eef_rot_rpy = np.array([p.getEulerFromQuaternion(quat) for quat in eef_rot])
 
-            fig, axs = plt.subplots(3, 2)
-
-            sub_titles = [['x', 'roll'], ['y', 'pitch'], ['z', 'yaw']]
-            fig.suptitle("Position Based Visual Servo End Effector Pose - time plot")
-            for i in range(3):
-                axs[i, 0].plot(times, eef_pos[:, i] * 100)
-                axs[i, 0].plot(times, goal_pos[i] * np.ones(len(times)) * 100)
-                axs[i, 0].legend([sub_titles[i][0], 'goal'])
-                axs[i, 0].set_xlabel('Time(s)')
-                axs[i, 0].set_ylabel('cm')
-                # axs[i, 0].set_title(sub_titles[i][0])
-            goal_rpy = p.getEulerFromQuaternion(goal_rot)
-            print("rpy final error: ")
-            # [-0.0056446   0.02230498  0.0133852 ]
-            # [-0.0152125   0.03453246  0.01255567]
-            # [-0.01669663  0.03247189  0.02033215]
-
-            print(eef_rot_rpy[-1, :] - goal_rpy)
-            for i in range(3):
-                axs[i, 1].plot(times, eef_rot_rpy[:, i] * 180 / np.pi)
-                axs[i, 1].plot(times, goal_rpy[i] * np.ones(len(times)) * 180 / np.pi)
-                axs[i, 1].legend([sub_titles[i][1], 'goal'])
-                axs[i, 1].set_xlabel('Time(s)')
-                axs[i, 1].set_ylabel('deg')
-                # axs[i, 1].set_title(sub_titles[i][1])
-
-            '''
-            plt.subplot(2, 1, 2)
-            plt.plot(times, eef_rot_rpy)
-            '''
-            for ax in axs.flat:
-                ax.set(xlabel='time')
-
-            plt.show()
 
     def cart_vel_linear_test(self, t=1.5, v=0.05):
         self.cartesian_vel_control('left', [-v, 0, 0, 0, 0, 0], t)
@@ -542,6 +507,10 @@ class vs():
         # self.draw_pose_cam(self.cur_pose_est)
         print("====== finitsh pbvs_pf initialization ======")
         it = 1
+        start = time.time()
+        times_all = []
+        eef_pos_all = []
+        eef_rot_all = []
         while not self.goal_reached:
             self.shared_pf_fin.value = 0
             img_observed, depth, seg = self.get_image()
@@ -550,9 +519,9 @@ class vs():
             p_pf.start()
             print("=========== start vel controller, iteration {} ===========".format(it))
             it += 1
-            self.pbvs("left", goal_pos, goal_rot,
-                      kv=0.5,
-                      kw=0.2,
+            times, eef_pos, eef_rot = self.pbvs("left", goal_pos, goal_rot,
+                      kv=0.6,
+                      kw=0.3,
                       eps_pos=0.005,
                       eps_rot=0.05,
                       plot_pose=False,
@@ -562,12 +531,58 @@ class vs():
                       perturb_orientation=False,
                       mu_R=0.3,
                       sigma_R=0.3,
-                      plot_result=False,
+                      plot_result=True,
                       pf_mode=True)
+            times_all.append(np.array(times))
+            eef_pos_all.append(np.array(eef_pos))
+            eef_rot_all.append(np.array(eef_rot))
+            print(len(times_all), len(eef_pos_all), len(eef_rot_all))
             print("finish vel controller")
             p_pf.join()
 
             if self.goal_reached:
+                times = np.concatenate(times_all) - start
+                eef_pos = np.concatenate(eef_pos_all, axis=0)
+                eef_rot = np.concatenate(eef_rot_all, axis=0)
+                eef_rot_rpy = np.array([p.getEulerFromQuaternion(quat) for quat in eef_rot])
+                print(times.shape)
+                print(eef_pos.shape)
+                print(eef_rot_rpy.shape)
+
+                fig, axs = plt.subplots(3, 2)
+
+                sub_titles = [['x', 'roll'], ['y', 'pitch'], ['z', 'yaw']]
+                fig.suptitle("Particle Filter based Position Based Visual Servo End Effector Pose - time plot")
+                for i in range(3):
+                    axs[i, 0].plot(times, eef_pos[:, i] * 100)
+                    axs[i, 0].plot(times, goal_pos[i] * np.ones(len(times)) * 100)
+                    axs[i, 0].legend([sub_titles[i][0], 'goal'])
+                    axs[i, 0].set_xlabel('Time(s)')
+                    axs[i, 0].set_ylabel('cm')
+                    # axs[i, 0].set_title(sub_titles[i][0])
+                goal_rpy = p.getEulerFromQuaternion(goal_rot)
+                print("rpy final error: ")
+                # [-0.0056446   0.02230498  0.0133852 ]
+                # [-0.0152125   0.03453246  0.01255567]
+                # [-0.01669663  0.03247189  0.02033215]
+
+                print(eef_rot_rpy[-1, :] - goal_rpy)
+                for i in range(3):
+                    axs[i, 1].plot(times, eef_rot_rpy[:, i] * 180 / np.pi)
+                    axs[i, 1].plot(times, goal_rpy[i] * np.ones(len(times)) * 180 / np.pi)
+                    axs[i, 1].legend([sub_titles[i][1], 'goal'])
+                    axs[i, 1].set_xlabel('Time(s)')
+                    axs[i, 1].set_ylabel('deg')
+                    # axs[i, 1].set_title(sub_titles[i][1])
+
+                '''
+                plt.subplot(2, 1, 2)
+                plt.plot(times, eef_rot_rpy)
+                '''
+                for ax in axs.flat:
+                    ax.set(xlabel='time')
+
+                plt.show()
                 break
 
             # access resulting weights from HOG measurement update in the multiprocessing and copy into self.pf.w
