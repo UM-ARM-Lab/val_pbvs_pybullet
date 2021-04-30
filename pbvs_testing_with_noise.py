@@ -33,23 +33,62 @@ def main():
     print(i)
     time.sleep(1)
     '''
+
+    fig1, axs1, l, l1 = val.pbvs("left", goal_pos, goal_rot,
+                 kv=1.0,
+                 kw=1.2,
+                 eps_pos=0.005,
+                 eps_rot=0.02,
+                 plot_pose=True,
+                 perturb_jacobian=False,
+                 perturb_Jac_joint_mu=0.2,
+                 perturb_Jac_joint_sigma=0.2,
+                 perturb_orientation=False,
+                 mu_R=0.3,
+                 sigma_R=0.3,
+                 plot_result=True)
+    p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos2)
+    _,_,_,l2=val.pbvs("left", goal_pos, goal_rot,
+                 kv=1.0,
+                 kw=1.2,
+                 eps_pos=0.005,
+                 eps_rot=0.02,
+                 plot_pose=True,
+                 perturb_jacobian=True,
+                 perturb_Jac_joint_mu=0.2,
+                 perturb_Jac_joint_sigma=0.2,
+                 perturb_orientation=False,
+                 mu_R=0.3,
+                 sigma_R=0.3,
+                 plot_result=True,
+                 fig=fig1,
+                 axs=axs1)
+    p.resetJointStatesMultiDof(val.robot, jointIndices=val.left_arm_joint_indices, targetValues=init_pos2)
+    _,_,l,l3=val.pbvs("left", goal_pos, goal_rot,
+                 kv=1.0,
+                 kw=1.2,
+                 eps_pos=0.005,
+                 eps_rot=0.02,
+                 plot_pose=True,
+                 perturb_jacobian=False,
+                 perturb_Jac_joint_mu=0.2,
+                 perturb_Jac_joint_sigma=0.2,
+                 perturb_orientation=True,
+                 mu_R=0.3,
+                 sigma_R=0.3,
+                 plot_result=True,
+                 fig=fig1,
+                 axs=axs1)
+    fig1.text(0.5, 0.04, "Time(s)", ha="center")
+    fig1.tight_layout()
+    #plt.text(0.5, 0.04, "Time(s)", ha="center")
+    plt.legend([l,l1,l2,l3], ["Goal", "No noise", "Jacobian noise", "Rsc Noise"])
+    plt.show()
+    time.sleep(1)
     '''
-    val.pbvs("left", goal_pos, goal_rot,
-             kv=1.0,
-             kw=0.8,
-             eps_pos=0.005,
-             eps_rot=0.05,
-             plot_pose=True,
-             perturb_jacobian=False,
-             perturb_Jac_joint_mu=0.2,
-             perturb_Jac_joint_sigma=0.2,
-             perturb_orientation=False,
-             mu_R=0.3,
-             sigma_R=0.3,
-             plot_result=True)
+    val.pbvs_pf(goal_pos, goal_rot, print_init_poses=False, num_particles=150, sigma=0.05)
     '''
 
-    val.pbvs_pf(goal_pos, goal_rot, print_init_poses=False)
 
     p.disconnect()
 

@@ -219,7 +219,9 @@ class vs():
              mu_R=0.4,
              sigma_R=0.4,
              plot_result=False,
-             pf_mode=False):
+             pf_mode=False,
+             axs=None,
+             fig=None):
 
         # Initialize variables
         self.perturb_Jac_joint_mu = perturb_Jac_joint_mu
@@ -267,7 +269,8 @@ class vs():
                 self.perturb_motion_R_sigma = 0.0
                 self.perturb_motion_t_mu = 0.0
                 self.perturb_motion_t_sigma = self.perturb_motion_R_sigma
-                dR = sp.SO3.exp(np.random.normal(self.perturb_motion_R_mu, self.perturb_motion_R_sigma, 3)).matrix()
+                dR = sp.SO3.exp(
+                    np.random.normal(self.perturb_motion_R_mu, self.perturb_motion_R_sigma, 3)).matrix()
                 dt = np.random.normal(self.perturb_motion_t_mu, self.perturb_motion_t_sigma, 3)
                 # self.draw_pose_cam(motion)
                 self.motion = motion_truth * sp.SE3(dR, dt)
@@ -323,18 +326,18 @@ class vs():
         if plot_result:
             eef_pos = np.array(eef_pos)
             eef_rot_rpy = np.array([p.getEulerFromQuaternion(quat) for quat in eef_rot])
-
-            fig, axs = plt.subplots(3, 2)
+            if axs is None:
+                fig, axs = plt.subplots(3, 2, sharex=True)
 
             sub_titles = [['x', 'roll'], ['y', 'pitch'], ['z', 'yaw']]
             fig.suptitle("Position Based Visual Servo End Effector Pose - time plot")
             for i in range(3):
-                axs[i, 0].plot(times, eef_pos[:, i] * 100)
-                axs[i, 0].plot(times, goal_pos[i] * np.ones(len(times)) * 100)
-                axs[i, 0].legend([sub_titles[i][0], 'goal'])
-                axs[i, 0].set_xlabel('Time(s)')
+                l1, = axs[i, 0].plot(times, eef_pos[:, i] * 100)
+                l, = axs[i, 0].plot(times, goal_pos[i] * np.ones(len(times)) * 100)
+                # axs[i, 0].legend([sub_titles[i][0], 'goal'])
+                # axs[i, 0].set_xlabel('Time(s)')
                 axs[i, 0].set_ylabel('cm')
-                # axs[i, 0].set_title(sub_titles[i][0])
+                axs[i, 0].set_title(sub_titles[i][0])
             goal_rpy = p.getEulerFromQuaternion(goal_rot)
             print("rpy final error: ")
             # [-0.0056446   0.02230498  0.0133852 ]
@@ -345,19 +348,21 @@ class vs():
             for i in range(3):
                 axs[i, 1].plot(times, eef_rot_rpy[:, i] * 180 / np.pi)
                 axs[i, 1].plot(times, goal_rpy[i] * np.ones(len(times)) * 180 / np.pi)
-                axs[i, 1].legend([sub_titles[i][1], 'goal'])
-                axs[i, 1].set_xlabel('Time(s)')
+                # axs[i, 1].legend([sub_titles[i][1], 'goal'])
+                # axs[i, 1].set_xlabel('Time(s)')
                 axs[i, 1].set_ylabel('deg')
-                # axs[i, 1].set_title(sub_titles[i][1])
+                axs[i, 1].set_title(sub_titles[i][1])
 
             '''
             plt.subplot(2, 1, 2)
             plt.plot(times, eef_rot_rpy)
             '''
+            '''
             for ax in axs.flat:
                 ax.set(xlabel='time')
-
-            plt.show()
+            '''
+            #plt.show()
+            return fig, axs, l, l1
 
     def cart_vel_linear_test(self, t=1.5, v=0.05):
         self.cartesian_vel_control('left', [-v, 0, 0, 0, 0, 0], t)

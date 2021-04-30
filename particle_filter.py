@@ -31,7 +31,7 @@ def wrapToPI(phase):
 # filter a.k.a bootstrap filter
 class particle_filter:
 
-    def __init__(self, system, init, sigma = 10000):
+    def __init__(self, system, init, sigma = 10):
         # Particle filter construct an instance of this class
         #
         # Input:
