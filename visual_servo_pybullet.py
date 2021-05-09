@@ -23,6 +23,15 @@ class vs():
                  perturb_jacobian=False,
                  perturb_orientation=False,
                  ):
+        """
+
+        :param perturb_Jac_joint_mu: mean of noise added to joint state when getting Jacobian
+        :param perturb_Jac_joint_sigma: covariance of noise added to joint state when getting Jacobian
+        :param mu_R: mean of noise added in tangent space when getting eef orientation
+        :param sigma_R: covariance of noise added in tangent space when getting eef orientation
+        :param perturb_jacobian: perturb Jacobian or not
+        :param perturb_orientation: perturb orientation or not
+        """
         ##################### initialize ##################
         ###vars to init
         # Initialize variables
@@ -132,12 +141,18 @@ class vs():
         """
         Cartesian end-effector controller
         requires:
-        group_name: 'right_arm' or 'left_arm'
+        arm: 'right' or 'left'
         twist: [vx,vy,vz,wx,wy,wz], in global frame
         duration: execution time in sec
         r: control bandwidth (loop rate)
+        damped: using damped pseudo-inverse when calculating Jacobian
+        l_damped: damping coefficient
         v_threshold: end-effector max linear velocity magnitude
         omega_threshold: end-effector max angular velocity magnitude
+        joint_vel_threshold: joint velocity threshold
+        cond_threshold: condition number threshold
+        show_cond: print condition number when executing
+        perturb_Jacobian: adding noise to Jacobian, perturb parameters set in initialization
         """
         self.perturb_jacobian = perturb_jacobian
         # Initialize tool and arm_joint_indices
@@ -211,13 +226,17 @@ class vs():
              eps_rot=0.05,
              vs_rate=20,
              plot_pose=False,
-             camera_update=False,
+             print_err=False,
              perturb_jacobian=False,
              perturb_Jac_joint_mu=0.1,
              perturb_Jac_joint_sigma=0.1,
              perturb_orientation=False,
              mu_R=0.4,
              sigma_R=0.4,
+             perturb_motion_R_mu=0.0,
+             perturb_motion_R_sigma=0.0,
+             perturb_motion_t_mu=0.0,
+             perturb_motion_t_sigma=0.0,
              plot_result=False,
              pf_mode=False):
 
@@ -228,14 +247,13 @@ class vs():
         self.perturb_R_sigma = sigma_R
         if arm == "right":
             tool = self.right_tool
-            arm_joint_indices = self.right_arm_joint_indices
         elif arm == "left":
             tool = self.left_tool
-            arm_joint_indices = self.left_arm_joint_indices
         else:
             print('''arm incorrect, input "left" or "right" ''')
             return
 
+        # Initialize pos_plot_id for later use
         if pf_mode:
             cur_pos, cur_rot = SE32_trans_rot(self.cur_pose_est)
         else:
@@ -259,21 +277,16 @@ class vs():
             # If using particle filter and the hog computation has finished, exit pbvs control
             # and assign total estimated motion in eef frame
             if pf_mode and self.shared_pf_fin.value == 1:
-                # print("motion: ", motion)
-                # self.motion = motion
+                # eef Motion estimated from pose estimate of last iteration and current fk
                 motion_truth = (self.Trc * self.cur_pose_est).inverse() * get_pose(self.robot, tool, SE3=True)
                 # print("motion truth:", motion_truth)
-                self.perturb_motion_R_mu = 0.0
-                self.perturb_motion_R_sigma = 0.0
-                self.perturb_motion_t_mu = 0.0
-                self.perturb_motion_t_sigma = self.perturb_motion_R_sigma
-                dR = sp.SO3.exp(np.random.normal(self.perturb_motion_R_mu, self.perturb_motion_R_sigma, 3)).matrix()
-                dt = np.random.normal(self.perturb_motion_t_mu, self.perturb_motion_t_sigma, 3)
+
+                dR = sp.SO3.exp(np.random.normal(perturb_motion_R_mu, perturb_motion_R_sigma, 3)).matrix()
+                dt = np.random.normal(perturb_motion_t_mu, perturb_motion_t_sigma, 3)
                 # self.draw_pose_cam(motion)
                 self.motion = motion_truth * sp.SE3(dR, dt)
                 return
-            if camera_update:
-                camera_test()
+
             # get current eef pose in camera frame
             if pf_mode:
                 cur_pos, cur_rot = SE32_trans_rot(self.cur_pose_est)
@@ -285,7 +298,6 @@ class vs():
                 eef_pos.append(cur_pos)
                 eef_rot.append(cur_rot)
                 times.append(time.time() - start)
-                print(time.time() - start)
             cur_pos_inv, cur_rot_inv = p.invertTransform(cur_pos, cur_rot)
             # Pose of goal in camera frame
             pos_cg, rot_cg = p.multiplyTransforms(cur_pos_inv, cur_rot_inv, goal_pos, goal_rot)
@@ -293,10 +305,11 @@ class vs():
             err_pos = np.linalg.norm(pos_cg)
             err_rot = np.linalg.norm(p.getAxisAngleFromQuaternion(rot_cg)[1])
             if err_pos < eps_pos and err_rot < eps_rot:
+                p.removeAllUserDebugItems()
                 break
             else:
-                pass
-                # print("Error to goal, position: {:2f}, orientation: {:2f}".format(err_pos, err_rot))
+                if print_err:
+                    print("Error to goal, position: {:2f}, orientation: {:2f}".format(err_pos, err_rot))
 
             Rsc = np.array(p.getMatrixFromQuaternion(cur_rot)).reshape(3, 3)
             # Perturb Rsc in SO(3) by a random variable in tangent space so(3)
@@ -309,9 +322,7 @@ class vs():
                                      [np.zeros((3, 3)), Rsc]])
             twist_global = local2global.dot(twist_local)
             start_loop = time.time()
-            self.cartesian_vel_control(arm, np.asarray(twist_global), 1 / vs_rate,
-                                       show_cond=False,
-                                       perturb_jacobian=perturb_jacobian)
+            self.cartesian_vel_control(arm, np.asarray(twist_global), 1 / vs_rate, perturb_jacobian=perturb_jacobian)
             if pf_mode:
                 delta_t = time.time() - start_loop
                 motion = motion * sp.SE3.exp(twist_local * delta_t)
@@ -334,26 +345,15 @@ class vs():
                 axs[i, 0].legend([sub_titles[i][0], 'goal'])
                 axs[i, 0].set_xlabel('Time(s)')
                 axs[i, 0].set_ylabel('cm')
-                # axs[i, 0].set_title(sub_titles[i][0])
             goal_rpy = p.getEulerFromQuaternion(goal_rot)
-            print("rpy final error: ")
-            # [-0.0056446   0.02230498  0.0133852 ]
-            # [-0.0152125   0.03453246  0.01255567]
-            # [-0.01669663  0.03247189  0.02033215]
 
-            print(eef_rot_rpy[-1, :] - goal_rpy)
             for i in range(3):
                 axs[i, 1].plot(times, eef_rot_rpy[:, i] * 180 / np.pi)
                 axs[i, 1].plot(times, goal_rpy[i] * np.ones(len(times)) * 180 / np.pi)
                 axs[i, 1].legend([sub_titles[i][1], 'goal'])
                 axs[i, 1].set_xlabel('Time(s)')
                 axs[i, 1].set_ylabel('deg')
-                # axs[i, 1].set_title(sub_titles[i][1])
 
-            '''
-            plt.subplot(2, 1, 2)
-            plt.plot(times, eef_rot_rpy)
-            '''
             for ax in axs.flat:
                 ax.set(xlabel='time')
 
@@ -373,18 +373,18 @@ class vs():
         self.cartesian_vel_control('left', [0, 0, -v, 0, 0, 0], t)
         time.sleep(2)
 
-    def cart_vel_angular_test(self, t2=1.5, w=0.25):
-        self.cartesian_vel_control('left', [0, 0, 0, w, 0, 0], t2)
+    def cart_vel_angular_test(self, t=1.5, w=0.25):
+        self.cartesian_vel_control('left', [0, 0, 0, w, 0, 0], t)
         time.sleep(1)
-        self.cartesian_vel_control('left', [0, 0, 0, -w, 0, 0], t2)
+        self.cartesian_vel_control('left', [0, 0, 0, -w, 0, 0], t)
         time.sleep(1)
-        self.cartesian_vel_control('left', [0, 0, 0, 0, w, 0], t2)
+        self.cartesian_vel_control('left', [0, 0, 0, 0, w, 0], t)
         time.sleep(1)
-        self.cartesian_vel_control('left', [0, 0, 0, 0, -w, 0], t2)
+        self.cartesian_vel_control('left', [0, 0, 0, 0, -w, 0], t)
         time.sleep(1)
-        self.cartesian_vel_control('left', [0, 0, 0, 0, 0, w], t2)
+        self.cartesian_vel_control('left', [0, 0, 0, 0, 0, w], t)
         time.sleep(1)
-        self.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t2)
+        self.cartesian_vel_control('left', [0, 0, 0, 0, 0, -w], t)
         time.sleep(2)
 
     def get_cam_pose(self):
@@ -416,24 +416,6 @@ class vs():
         # depth image transformed to true depth, each pixel in segImg is the linkID
         return rgbImg[:, :, :3], get_true_depth(depthImg, self.z_near, self.z_far), ((segImg >> 24) - 1)
 
-    def render_eef(self, eef_pose):
-        """
-        In Pybullet , render left/right two grippers image given eef pose in camera frame
-        Camera's pose at origin,
-        :param eef_pose: eef pose in camera frame
-        :return: image
-        """
-        pass
-
-    def hog_likelihood(self, img_measured, img_rendered):
-        """
-        Compute log_likelihood of measurement log p(z|x)
-        :param img_measured:
-        :param img_rendered:
-        :return:
-        """
-        pass
-
     def process_model(self, x, u, w):
         """
         process model X[k+1] = X[k] * u * Exp(w)
@@ -445,41 +427,53 @@ class vs():
         f = x * u * sp.SE3.exp(w)
         return f
 
-    def measurement_model(self, img):
-
-        pass
-
-    def pf_init(self, print_init_poses=True):
+    def pf_init(self,
+                print_init_poses=True,
+                Q=np.diag(np.power(3 * [0.003] + 3 * [0.05], 2)),
+                Sigma_init=np.diag(np.power(3 * [0.003] + 3 * [0.05], 2)),
+                num_particles=200,
+                sigma_hog=0.1,
+                draw_pose_width=0.2,
+                # hog computation parameters
+                orientations=8,
+                pixels_per_cell=(16, 16),
+                cells_per_block=(1, 1),
+                multichannel=True
+                ):
         """
         initialize parameters of particle filter
         process noise covariance, initial covariance
-        process, measurement model
+        process model X[k+1] = X[k] * Exp(u) * Exp(w)
+        :param sigma_hog: parameter in HOG likelihood calculation
+        :param print_init_poses:
+        :param Q: process noise covariance Q of w in R6, isomorphic to se(3)
+        :param Sigma_init: initial state covariance in pose, in R6, isomorphic to se(3)
         :return:
         """
         print("start initializing pf")
-        # process model X[k+1] = X[k] * Exp(u) * Exp(w)
-        # process noise covariance in R6, isomorphic to se(3)
-        # Q = np.diag(np.power([0.01, 0.01, 0.01, 0.01, 0.01, 0.01], 2))
-        Q = np.diag(np.power(3 * [0.003] + 3 * [0.05], 2))
-        # initial state covariance in pose, in R6, isomorphic to se(3)
-        # Sigma_init = 0.0001 * np.eye(6)
-        Sigma_init = np.diag(np.power(3 * [0.003] + 3 * [0.05], 2))
 
         # build the system
         sys = myStruct()
         sys.f = self.process_model
-        sys.h = self.measurement_model
         sys.Q = Q
 
         # initialization
         init = myStruct()
-        init.n = 200
+        init.n = num_particles
         # get eef pose from fk, represent eef pose in camera frame
         eef_trans, eef_rot = get_pose(self.robot, self.left_tool)
         init.x = self.Trc.inverse() * trans_rot2SE3(eef_trans, eef_rot)
         init.Sigma = Sigma_init
 
-        self.pf = particle_filter(sys, init, sigma=0.1)  # sigma, parameter in HOG likelihood calculation
+        self.pf = particle_filter(sys,
+                                  init,
+                                  sigma=sigma_hog,
+                                  # hog computation parameters
+                                  orientations=orientations,
+                                  pixels_per_cell=pixels_per_cell,
+                                  cells_per_block=cells_per_block,
+                                  multichannel=multichannel
+                                  )  # sigma, parameter in HOG likelihood calculation
 
         # the member variable of shared flag, indicating end of HOG likelihood calculation, accessible by member function
         # velocity controller
@@ -492,14 +486,13 @@ class vs():
             for pose_cam in self.pf.p.x:
                 pose_robot = self.Trc * pose_cam
                 trans, rot = SE32_trans_rot(pose_robot)
-                draw_pose(trans, rot, width=0.2)
+                draw_pose(trans, rot, width=draw_pose_width)
         print("end initializing pf")
 
     def draw_pose_cam(self, pose_cam, uids=None, width=5, axis_len=0.1):
         """
         draw pose in camera frame
         :param Tc: type sp.SE(3)
-        :return:
         """
         pose_robot = self.Trc * pose_cam
         trans, rot = SE32_trans_rot(pose_robot)
@@ -530,16 +523,86 @@ class vs():
         print("True pose")
         draw_pose(true_trans, true_rot, width=2)
 
-    def pbvs_pf(self, goal_pos, goal_rot, print_init_poses=True):
+    def pbvs_pf(self,
+                tool,
+                goal_pos,
+                goal_rot,
+                draw_particle_and_pose_est=True,
+                Q=np.diag(np.power(3 * [0.004] + 3 * [0.001], 2)),
+                Sigma_init=np.diag(np.power(3 * [0.004] + 3 * [0.001], 2)),
+                num_particles=200,
+                sigma_hog=0.1,
+                # PBVS parameters, see pbvs docstring
+                kv=0.5,
+                kw=0.2,
+                eps_pos=0.005,
+                eps_rot=0.1,
+                plot_pose=False,
+                perturb_jacobian=False,
+                perturb_Jac_joint_mu=0.2,
+                perturb_Jac_joint_sigma=0.2,
+                perturb_orientation=False,
+                mu_R=0.3,
+                sigma_R=0.3,
+                plot_result=False,
+                # hog computation parameters
+                orientations=8,
+                pixels_per_cell=(16, 16),
+                cells_per_block=(1, 1),
+                multichannel=True,
+                # noise added in propagation
+                perturb_motion_R_mu=0.0,
+                perturb_motion_R_sigma=0.0,
+                perturb_motion_t_mu=0.00,
+                perturb_motion_t_sigma=0.003,
+
+                draw_pose_width=0.2,
+                print_init_poses=False
+                ):
+        """
+
+        :param tool: which arm to use "left" or "right"
+        :param goal_pos: goal position in camera frame
+        :param goal_rot: goal quaternion in camera frame
+            PBVS Parameters
+            process model X[k+1] = X[k] * Exp(u) * Exp(w)
+        :param Q: process noise covariance Q of w in R6, isomorphic to se(3)
+        :param Sigma_init: initial state covariance in pose, in R6, isomorphic to se(3)
+
+        :param num_particles: number of particles in pf
+        :param sigma_hog: sigma parameter in measurement likelihood computation
+
+            hog computation parameters:
+        :param orientations:
+        :param pixels_per_cell:
+        :param cells_per_block:
+        :param multichannel:
+
+        :param draw_particle_and_pose_est:
+        :return:
+        """
+
         # initialize particle filter
         print("====== start pbvs_pf initialization ======")
-        self.pf_init(print_init_poses=print_init_poses)
-        self.draw_particle_pose()
+        self.pf_init(print_init_poses=print_init_poses,
+                     Q=Q,
+                     Sigma_init=Sigma_init,
+                     num_particles=num_particles,
+                     sigma_hog=sigma_hog,
+                     draw_pose_width=draw_pose_width,
+                     orientations=orientations,
+                     pixels_per_cell=pixels_per_cell,
+                     cells_per_block=cells_per_block,
+                     multichannel=multichannel
+                     )
+
         img_observed, depth, seg = self.get_image()
         self.pf.importance_measurement(img_observed, self.shared_pf_fin)
         self.cur_pose_est = self.pf.get_pose_est()
         # print("current pose after initial importance measurement")
         # self.draw_pose_cam(self.cur_pose_est)
+        if draw_particle_and_pose_est:
+            self.draw_particle_pose()
         print("====== finitsh pbvs_pf initialization ======")
         it = 1
         while not self.goal_reached:
@@ -550,20 +613,25 @@ class vs():
             p_pf.start()
             print("=========== start vel controller, iteration {} ===========".format(it))
             it += 1
-            self.pbvs("left", goal_pos, goal_rot,
-                      kv=0.5,
-                      kw=0.2,
-                      eps_pos=0.005,
-                      eps_rot=0.05,
-                      plot_pose=False,
-                      perturb_jacobian=False,
-                      perturb_Jac_joint_mu=0.2,
-                      perturb_Jac_joint_sigma=0.2,
-                      perturb_orientation=False,
-                      mu_R=0.3,
-                      sigma_R=0.3,
-                      plot_result=False,
-                      pf_mode=True)
+            self.pbvs(tool, goal_pos, goal_rot,
+                      kv=kv,
+                      kw=kw,
+                      eps_pos=eps_pos,
+                      eps_rot=eps_rot,
+                      plot_pose=plot_pose,
+                      perturb_jacobian=perturb_jacobian,
+                      perturb_Jac_joint_mu=perturb_Jac_joint_mu,
+                      perturb_Jac_joint_sigma=perturb_Jac_joint_sigma,
+                      perturb_orientation=perturb_orientation,
+                      mu_R=mu_R,
+                      sigma_R=sigma_R,
+                      plot_result=plot_result,
+                      pf_mode=True,
+                      perturb_motion_R_mu=perturb_motion_R_mu,
+                      perturb_motion_R_sigma=perturb_motion_R_sigma,
+                      perturb_motion_t_mu=perturb_motion_t_mu,
+                      perturb_motion_t_sigma=perturb_motion_t_sigma,
+                    )
             print("finish vel controller")
             p_pf.join()
 
@@ -574,19 +642,16 @@ class vs():
             existing_shm = shared_memory.SharedMemory(name=self.pf.shm_name)
             w = np.ndarray(self.pf.p.w.shape, dtype=np.float, buffer=existing_shm.buf)
             self.pf.p.w[:] = w[:]
+
             # update number of effective particles
             self.pf.update_neef()
-
-            # pose_weighted = self.pf.get_pose_est()
-            # print("After measurement update, before propagation")
-            # self.draw_pose_cam(pose_weighted, width=2)
-            # time.sleep(2)
 
             # propagate pose, draw pose and particles
             self.pf.sample_motion(self.motion)
             self.cur_pose_est = self.pf.get_pose_est()
-            self.draw_particle_pose()
-            self.draw_pose_cam(self.cur_pose_est, width=2, uids=[100, 101, 102])
+            if draw_particle_and_pose_est:
+                self.draw_particle_pose()
+                self.draw_pose_cam(self.cur_pose_est, width=2, uids=[100, 101, 102])
 
             # resampling
             print("Neef after importance measurement {}".format(self.pf.Neff))

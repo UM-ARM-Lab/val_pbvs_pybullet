@@ -12,6 +12,8 @@ from renderer import *
 from skimage.feature import hog
 from skimage import data, exposure
 from multiprocessing import Array, shared_memory
+
+
 class myStruct():
     def __init__(self):
         self.x = []
@@ -26,23 +28,38 @@ def wrapToPI(phase):
         x_wrap -= 2 * np.pi * np.sign(x_wrap)
     return x_wrap
 
+
 # Particle filter class for state estimation of a nonlinear system
 # The implementation follows the Sample Importance Resampling (SIR)
 # filter a.k.a bootstrap filter
 class particle_filter:
 
-    def __init__(self, system, init, sigma = 10000):
+    def __init__(self,
+                 system,
+                 init,
+                 sigma=0.1,
+                 # hog computation parameters
+                 orientations=8,
+                 pixels_per_cell=(16, 16),
+                 cells_per_block=(1, 1),
+                 multichannel=True
+                 ):
         # Particle filter construct an instance of this class
         #
         # Input:
         #   system: system and noise models
         #   init:   initialization parameters
 
+        # hog computation parameters
+        self.orientations = orientations
+        self.pixels_per_cell = pixels_per_cell
+        self.cells_per_block = cells_per_block
+        self.multichannel = multichannel
+
         self.f = system.f  # process model
         self.Q = system.Q  # process noise covariance
         self.LQ = np.linalg.cholesky(self.Q)  # Cholesky factor of Q
         self.n = init.n  # number of particles
-        self.h = system.h
         self.sigma = sigma
 
         # initialize particles
@@ -52,14 +69,12 @@ class particle_filter:
         self.Neff = self.n
         L_init = np.linalg.cholesky(init.Sigma)
 
-
         for i in range(self.n):
             self.p.x.append(init.x * sp.SE3.exp(np.dot(L_init, randn(6, 1))))
-            # self.p.x.append(np.dot(L_init, 0.5 * np.ones([len(init.x), 1])) + init.x)
             self.p.w.append(wu)
         self.p.w = np.array(self.p.w).reshape(-1, 1)
 
-        # the shared variable of all weights of particles, needed because likelihood in the multiprocessing modifies it
+        # self.w: the shared variable of all weights of particles, needed because likelihood in the multiprocessing modifies it
         self.shm = shared_memory.SharedMemory(create=True, size=self.p.w.nbytes)
         self.w = np.ndarray(self.p.w.shape, dtype=self.p.w.dtype, buffer=self.shm.buf)
         self.shm_name = self.shm.name
@@ -74,32 +89,28 @@ class particle_filter:
         for i in range(self.n):
             # sample noise
             w = np.dot(self.LQ, randn(6, 1))
-            # w = np.dot(self.LQ, np.array([[0.5], [0.01]]))
+
             # propagate the particle
             self.p.x[i] = self.f(self.p.x[i], motion, w)
 
-    def sample_motion_cv(self):
-        # A constant velocity random walk motion model
-        for i in range(self.n):
-            # sample noise
-            w = np.dot(self.LQ, randn(4, 1))
-            # propagate the particle
-            self.p.x[i, :] = self.f(self.p.x[i, :], w).reshape(-1)
-
-    def importance_measurement(self, img, shared_pf_fin, left_gripper_joint=0, left_gripper2_joint=0):
+    def importance_measurement(self,
+                               img,
+                               shared_pf_fin,
+                               left_gripper_joint=0,
+                               left_gripper2_joint=0):
         # compare important weight for each particle based on the obtain range and bearing measurements
         #
         # Inputs:
         #   z: measurement
         print("starting importance measurement")
-        hog_observed = hog(img, orientations=8, pixels_per_cell=(16, 16),
-                                cells_per_block=(1, 1), multichannel=True)
+        hog_observed = hog(img, orientations=self.orientations, pixels_per_cell=self.pixels_per_cell,
+                           cells_per_block=self.cells_per_block, multichannel=self.multichannel)
         for i in range(self.n):
             # render img at the pose of each particle
             img_rd = self.rd.render_img(left_gripper_joint, left_gripper2_joint, self.p.x[i])
-            hog_rd = hog(img_rd, orientations=8, pixels_per_cell=(16, 16),
-                                cells_per_block=(1, 1), multichannel=True)
-            likelihood = np.exp(-1/self.sigma * np.linalg.norm(hog_observed - hog_rd))
+            hog_rd = hog(img_rd, orientations=self.orientations, pixels_per_cell=self.pixels_per_cell,
+                         cells_per_block=self.cells_per_block, multichannel=self.multichannel)
+            likelihood = np.exp(-1 / self.sigma * np.linalg.norm(hog_observed - hog_rd))
             # print("likelihood for particle {} is {}".format(i, likelihood))
             self.p.w[i] = self.p.w[i] * likelihood
 
@@ -116,7 +127,6 @@ class particle_filter:
     def update_neef(self):
         # compute effective number of particles
         self.Neff = 1 / np.sum(np.power(self.p.w, 2))  # effective number of particles
-
 
     def get_pose_est(self):
         """
@@ -141,12 +151,3 @@ class particle_filter:
                 j = j + 1
             self.p.x[i] = self.p.x[j]
             self.p.w[i] = 1 / self.n
-
-
-
-
-
-
-
-
-
