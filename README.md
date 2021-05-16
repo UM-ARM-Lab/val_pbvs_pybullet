@@ -31,7 +31,7 @@ export pybind11_DIR= **local directory to pybind11**
 eg: /home/mike/Pybullet/lib/pybind11/install/share/cmake/pybind11/
 pip3 install --user sophuspy
 ```
-###**scikit-image**
+### **scikit-image**
 ```
 pip install scikit-image
 ```
