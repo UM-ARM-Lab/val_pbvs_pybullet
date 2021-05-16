@@ -8,7 +8,6 @@
 ## Abstract
 Light-weight service robot arms and humanoids usually have inaccurate kinematics model as opposed to industrial robots. Visual servoing tackles this problem by continuously measuring the robot and target state and creating a feedback signal from camera images. In this project, a **particle filter-based Position-Based Visual Servoing (PBVS)** method is implemented in **PyBullet** simulation. As opposed to methods that attach markers to the end-effector for pose estimate, our method uses particle filter, which **renders image at the pose of each particle**, and uses **HOG likelihood** with the actual image as the measurement update, without the need of attaching a marker. The result in simulation shows that the end-effector can reach the target pose within the error threshold. 
 
-In the future, the code can be migrated to 
 ## Prerequisite
 ### **Linux**
 The code is developed and tested on Ubuntu 20.04, other versions might also work with the following libraries installed. Numpy, Scipy, Matplotlib are required.
@@ -40,4 +39,4 @@ pip install scikit-image
 Please run `demo_script.py` for sample codes to run the velocity controller, PBVS with added noise, and Particle-filter based PBVS
 
 ### Acknowledgement
-I would like to thank all members in Autonomous Robotic Manipulation Lab, University of Michigan for providing support and valuable feedback on this project. Last but not least, thank God for His mercy and faithfulness during this difficult semester. 
+I would like to thank all members in Autonomous Robotic Manipulation Lab, University of Michigan for providing support and valuable feedback on this project. Last but not least, thank God for His mercy and faithfulness during this difficult semester. 5/16/2021
