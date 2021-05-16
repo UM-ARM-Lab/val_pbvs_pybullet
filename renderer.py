@@ -19,7 +19,7 @@ class renderer:
             info = p.getJointInfo(self.robot, i, physicsClientId=self.physicsClient)
             jname = info[1].decode("ascii")
             self.jdict[jname] = i
-        print(self.jdict)
+        #print(self.jdict)
         self.joint_ids = [self.jdict["leftgripper"], self.jdict["leftgripper2"]]
 
         # camera stuff
