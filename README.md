@@ -1,9 +1,9 @@
-# Pybullet Simulation for markerless Position-Based Visual Servoing (PBVS) of a robot arm
-### **Author:** [Haoran Mike Cheng](https://www.linkedin.com/in/hrcheng/)
-### **Email:** hrcheng@umich.edu
-### **References:** [Project Report](https://drive.google.com/file/d/1RTxMGtyoRdckZbu1weEqGqMV1YU7K-99/view?usp=sharing)
-### **video:** [link](https://drive.google.com/file/d/1CJzujuzSmLbED6PKnHZAKvR8Pr7eE_Hm/view?usp=sharing)
-### ![Sample Image](https://drive.google.com/uc?export=view&id=1SN8ObK_XjMm3gslmQTcdCA_5doAEI9a0)
+## Pybullet Simulation for markerless Position-Based Visual Servoing (PBVS) of a robot arm
+**Author:** [Haoran Mike Cheng](https://www.linkedin.com/in/hrcheng/)
+**Email:** hrcheng@umich.edu
+**References:** [Project Report](https://drive.google.com/file/d/1RTxMGtyoRdckZbu1weEqGqMV1YU7K-99/view?usp=sharing)
+**video:** [link](https://drive.google.com/file/d/1CJzujuzSmLbED6PKnHZAKvR8Pr7eE_Hm/view?usp=sharing)
+![Sample Image](https://drive.google.com/uc?export=view&id=1SN8ObK_XjMm3gslmQTcdCA_5doAEI9a0)
 
 ## Abstract
 Light-weight service robot arms and humanoids usually have inaccurate kinematics model as opposed to industrial robots. Visual servoing tackles this problem by continuously measuring the robot and target state and creating a feedback signal from camera images. In this project, a **particle filter-based Position-Based Visual Servoing (PBVS)** method is implemented in **PyBullet** simulation. As opposed to methods that attach markers to the end-effector for pose estimate, our method uses particle filter, which **renders image at the pose of each particle**, and uses **HOG likelihood** with the actual image as the measurement update, without the need of attaching a marker. The result in simulation shows that the end-effector can reach the target pose within the error threshold. 
